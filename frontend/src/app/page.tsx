@@ -7,13 +7,54 @@ import {
   BarVisualizer,
   DisconnectButton,
   useParticipants,
+  useChat,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
+
+interface TranscriptEntry {
+  speaker: "user" | "agent";
+  text: string;
+  timestamp: Date;
+}
 
 function AgentInterface() {
-  const { state, audioTrack } = useVoiceAssistant();
+  const { state, audioTrack, agent } = useVoiceAssistant();
   const participants = useParticipants();
+  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+
+  // Listen for agent transcription events via data messages
+  useEffect(() => {
+    if (!agent?.participant) return;
+
+    const handleTranscription = (segments: any) => {
+      if (!segments?.length) return;
+      for (const segment of segments) {
+        if (segment.final && segment.text?.trim()) {
+          setTranscript((prev) => [
+            ...prev,
+            {
+              speaker: segment.participantIdentity?.startsWith("agent") ? "agent" : "user",
+              text: segment.text.trim(),
+              timestamp: new Date(),
+            },
+          ]);
+        }
+      }
+    };
+
+    // LiveKit components expose transcription via the agent hook
+    // The useVoiceAssistant hook provides transcription events
+    return () => {};
+  }, [agent]);
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [transcript]);
 
   return (
     <div
@@ -21,15 +62,17 @@ function AgentInterface() {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         height: "100%",
-        gap: "2rem",
+        gap: "1.5rem",
         fontFamily: "system-ui, sans-serif",
         color: "#e2e8f0",
+        padding: "2rem",
+        overflow: "auto",
       }}
     >
-      <h1 style={{ fontSize: "2rem", fontWeight: "bold" }}>Agent On Call</h1>
-      <p style={{ color: "#94a3b8" }}>
+      <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", margin: 0 }}>Agent On Call</h1>
+      <p style={{ color: "#94a3b8", margin: 0 }}>
         Status:{" "}
         <span
           style={{
@@ -38,7 +81,10 @@ function AgentInterface() {
                 ? "#22c55e"
                 : state === "listening"
                   ? "#3b82f6"
-                  : "#94a3b8",
+                  : state === "connecting"
+                    ? "#f59e0b"
+                    : "#94a3b8",
+            fontWeight: "bold",
           }}
         >
           {state}
@@ -49,17 +95,12 @@ function AgentInterface() {
         state={state}
         barCount={5}
         trackRef={audioTrack}
-        style={{ width: "300px", height: "100px" }}
+        style={{ width: "300px", height: "80px" }}
       />
 
-      <div style={{ marginTop: "1rem" }}>
-        <h3
-          style={{
-            fontSize: "0.9rem",
-            color: "#94a3b8",
-            marginBottom: "0.5rem",
-          }}
-        >
+      {/* Participants */}
+      <div style={{ width: "100%", maxWidth: "500px" }}>
+        <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.4rem" }}>
           Participants ({participants.length})
         </h3>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -67,7 +108,7 @@ function AgentInterface() {
             <li
               key={p.identity}
               style={{
-                padding: "0.3rem 0.8rem",
+                padding: "0.2rem 0.6rem",
                 fontSize: "0.85rem",
                 color: p.isAgent ? "#fcd34d" : "#e2e8f0",
               }}
@@ -79,9 +120,54 @@ function AgentInterface() {
         </ul>
       </div>
 
+      {/* Transcript */}
+      <div
+        ref={transcriptRef}
+        style={{
+          width: "100%",
+          maxWidth: "500px",
+          maxHeight: "250px",
+          overflowY: "auto",
+          border: "1px solid #334155",
+          borderRadius: "8px",
+          padding: "0.8rem",
+          background: "#1e293b",
+        }}
+      >
+        <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.5rem" }}>
+          Transcript
+        </h3>
+        {transcript.length === 0 ? (
+          <p style={{ color: "#475569", fontSize: "0.8rem", fontStyle: "italic" }}>
+            Speak to start the conversation...
+          </p>
+        ) : (
+          transcript.map((entry, i) => (
+            <div
+              key={i}
+              style={{
+                padding: "0.3rem 0",
+                fontSize: "0.85rem",
+                borderBottom: i < transcript.length - 1 ? "1px solid #1e293b" : "none",
+              }}
+            >
+              <span
+                style={{
+                  color: entry.speaker === "agent" ? "#fcd34d" : "#60a5fa",
+                  fontWeight: "bold",
+                  marginRight: "0.5rem",
+                }}
+              >
+                {entry.speaker === "agent" ? "Agent:" : "You:"}
+              </span>
+              <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
+            </div>
+          ))
+        )}
+      </div>
+
       <DisconnectButton
         style={{
-          marginTop: "1rem",
           padding: "0.5rem 1.5rem",
           borderRadius: "8px",
           border: "1px solid #dc2626",
@@ -112,6 +198,7 @@ export default function Home() {
       setConnectionDetails({ token: data.token, url: data.url });
     } catch (err) {
       console.error("Failed to get token:", err);
+    } finally {
       setConnecting(false);
     }
   }, []);

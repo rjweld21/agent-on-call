@@ -26,13 +26,27 @@ def _build_llm():
             api_key=os.environ.get("OPENAI_API_KEY"),
         )
     else:
-        from livekit.plugins import anthropic
+        from livekit.plugins import anthropic as anthropic_plugin
+        import anthropic as anthropic_sdk
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        return anthropic.LLM(
-            model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514"),
-            api_key=api_key,
-        )
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514")
+
+        if api_key:
+            # Standard Console API key — use directly
+            return anthropic_plugin.LLM(model=model, api_key=api_key)
+        elif auth_token:
+            # OAuth token (Claude CLI) — needs Bearer auth, not x-api-key
+            client = anthropic_sdk.AsyncAnthropic(
+                auth_token=auth_token,
+            )
+            return anthropic_plugin.LLM(model=model, client=client)
+        else:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN must be set. "
+                "Get an API key at https://console.anthropic.com/settings/keys"
+            )
 
 
 @server.rtc_session(agent_name="orchestrator")
