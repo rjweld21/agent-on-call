@@ -33,7 +33,7 @@ def _build_llm():
         raw_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         api_key = raw_api_key if raw_api_key not in PLACEHOLDER_VALUES else None
         auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
         # Determine the effective key
         effective_key = api_key or auth_token
