@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-on-call"
+version = "0.1.0"
+description = "Voice-first AI agent platform with orchestrator and sub-agents"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+dependencies = [
+    "livekit-agents[deepgram,cartesia,openai,silero,turn-detector,anthropic]~=1.4",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+    "black>=24.0",
+    "flake8>=7.0",
+    "mypy>=1.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.black]
+line-length = 127
+
+[tool.mypy]
+ignore_missing_imports = true
+strict = false
+
+[tool.flake8]
+max-line-length = 127
+max-complexity = 10
