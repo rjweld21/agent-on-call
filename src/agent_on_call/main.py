@@ -1,9 +1,11 @@
 """Agent On Call entrypoint — registers agent sessions with LiveKit."""
 
+import os
+
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentServer, AgentSession
-from livekit.plugins import silero
+from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent
 
@@ -13,12 +15,37 @@ load_dotenv(".env")
 server = AgentServer()
 
 
+def _build_llm():
+    """Build the LLM plugin based on LLM_PROVIDER env var."""
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    if provider == "openai":
+        from livekit.plugins import openai
+
+        return openai.LLM(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+    else:
+        from livekit.plugins import anthropic
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        return anthropic.LLM(
+            model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514"),
+            api_key=api_key,
+        )
+
+
 @server.rtc_session(agent_name="orchestrator")
 async def orchestrator_session(ctx: agents.JobContext):
     session = AgentSession(
-        stt="deepgram/nova-3",
-        llm="anthropic/claude-sonnet-4-5-20250514",
-        tts="cartesia/sonic-turbo",
+        stt=deepgram.STT(
+            model="nova-3",
+            api_key=os.environ.get("DEEPGRAM_API_KEY"),
+        ),
+        llm=_build_llm(),
+        tts=cartesia.TTS(
+            api_key=os.environ.get("CARTESIA_API_KEY"),
+        ),
         vad=silero.VAD.load(),
     )
 
