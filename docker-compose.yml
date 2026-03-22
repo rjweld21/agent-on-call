@@ -6,7 +6,7 @@ services:
       - "7880:7880"
       - "7881:7881"
     environment:
-      - LIVEKIT_KEYS=devkey:secret
+      - "LIVEKIT_KEYS=devkey: secret"
 
   agent:
     build: .
