@@ -29,7 +29,9 @@ def _build_llm():
         from livekit.plugins import anthropic as anthropic_plugin
         import anthropic as anthropic_sdk
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        PLACEHOLDER_VALUES = {"placeholder", "your_anthropic_api_key_here", ""}
+        raw_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = raw_api_key if raw_api_key not in PLACEHOLDER_VALUES else None
         auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
         model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514")
 
