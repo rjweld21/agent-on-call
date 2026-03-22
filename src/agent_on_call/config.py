@@ -42,7 +42,12 @@ def load_config() -> Config:
     openai_api_key = None
 
     if llm_provider == "anthropic":
-        anthropic_api_key = _require("ANTHROPIC_API_KEY")
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        if not anthropic_api_key:
+            raise ConfigError(
+                "Required environment variable ANTHROPIC_API_KEY is not set. "
+                "Get one at https://console.anthropic.com/settings/keys"
+            )
     elif llm_provider == "openai":
         openai_api_key = _require("OPENAI_API_KEY")
     else:
