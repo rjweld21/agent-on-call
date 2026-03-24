@@ -271,14 +271,34 @@ The agent needs to maintain state across conversations and start from where it l
 
 **Implementation approach:** Store session state as JSON/YAML files in a `sessions/` directory. On session start, load the most recent session for the selected project. The orchestrator's system prompt is dynamically built from project context + conversation history.
 
-### 6.3 Transcript Display (Bug Fix — Near Term)
+### 6.3 Transcript Display — DONE
 
-The frontend transcript panel exists but doesn't receive transcription events from LiveKit. Need to:
-- Hook into LiveKit's `TranscriptionReceived` room event (not the voice assistant hook)
-- Display both user speech (from STT) and agent speech (from TTS) in real-time
-- This is a frontend wiring issue, not a backend issue — STT is working server-side
+Fixed: Using `useVoiceAssistant().agentTranscriptions` for agent speech, `useTrackTranscription` for user voice, and `useChat()` for text messages. All merged into unified time-sorted transcript.
 
-### 6.4 Platform & Architecture
+### 6.4 Sub-Agent UX (M6b — Future)
+
+When sub-agents are implemented, the frontend needs:
+
+- **Task-based naming** — Sub-agent display names derived from their task (e.g., "Research - DB Selection", "Code Review - Auth Module"), not generic names
+- **Activity indicators in participant list:**
+  - Green pulse / glow = agent is actively working
+  - Yellow / amber = agent needs user feedback (waiting in guidance queue)
+  - Dimmed / gray = agent completed its task
+- **Highlight on communication** — When the orchestrator is relaying to/from a specific sub-agent, that agent's name highlights in the participant list so the user knows which agent is being discussed
+- **Notification badges** — Sub-agents with pending guidance requests show a badge count
+
+### 6.5 Managed Service Monitoring (Cloud — Future)
+
+For the managed cloud product, implement resource monitoring per workspace:
+
+- **Container metrics** — CPU usage, memory consumption per workspace container
+- **Volume usage** — Storage consumed per workspace volume (track growth over time)
+- **User-facing dashboard** — Show users their resource consumption
+- **Threshold alerts** — Notify users when approaching limits (e.g., "Workspace is using 80% of allocated storage")
+- **Scale recommendations** — Suggest infrastructure tier upgrades when usage patterns indicate need
+- **Billing integration** — Resource usage feeds into per-user billing for the managed service
+
+### 6.6 Platform & Architecture
 
 1. **Communicator/Coordinator split** — Separate the orchestrator's voice interface from sub-agent coordination into two agents
 2. **Chat-based status panel** — Persistent sidebar showing all agent statuses, waiting items, and history
