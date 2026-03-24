@@ -66,13 +66,13 @@ async def orchestrator_session(ctx: agents.JobContext):
         vad=silero.VAD.load(),
     )
 
-    # Set orchestrator display name
-    await ctx.room.local_participant.set_name("Orchestrator")
-
     await session.start(
         room=ctx.room,
         agent=OrchestratorAgent(),
     )
+
+    # Set orchestrator display name (must be after session.start connects to room)
+    await ctx.room.local_participant.set_name("Orchestrator")
 
     await session.generate_reply(
         instructions="Greet the user. Introduce yourself as the Agent On Call orchestrator. Ask how you can help today."
