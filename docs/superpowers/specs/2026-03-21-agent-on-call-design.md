@@ -98,8 +98,21 @@ Sub-agents are lightweight LiveKit Agents that join the room as named participan
 - **Creation:** Orchestrator spawns a new agent process, which joins the LiveKit room with a descriptive display name
 - **Visibility:** Appears in the participant list so the user can see active agents
 - **Communication:** Reports status and results to the orchestrator via LiveKit data channels or an internal message bus
-- **No voice:** Sub-agents do not listen to or produce audio in MVP. The orchestrator relays all communication
+- **No voice (MVP):** Sub-agents do not subscribe to audio or run STT. The orchestrator relays all relevant information via RPC. This keeps costs at 1x STT regardless of sub-agent count.
 - **Lifecycle:** Joins room → works on task → reports result (or queues for guidance) → leaves room when done
+
+**Sub-agent communication model (MVP — Model B):**
+- Sub-agents communicate exclusively with the orchestrator via LiveKit RPCs
+- They do NOT subscribe to user audio or run their own STT
+- The orchestrator decides what information is relevant and relays it
+- Cost: Only orchestrator runs STT/TTS. Sub-agents only use LLM when processing relayed messages.
+
+**Future hybrid model (premium option):**
+- Sub-agents can optionally subscribe to the orchestrator's STT transcript stream (text, not audio)
+- Key optimization: ONE STT stream produces text, which is fanned out to N listening agents — no per-agent STT cost
+- Sub-agents evaluate the transcript text via LLM and can proactively flag relevant information
+- Added cost: only LLM evaluation per listening agent (no additional STT)
+- User toggle: "Allow agents to listen in" (more responsive, slightly higher LLM cost) vs "Agents work independently" (default, lowest cost)
 
 **Sub-agent states:**
 - `working` — actively processing the task
