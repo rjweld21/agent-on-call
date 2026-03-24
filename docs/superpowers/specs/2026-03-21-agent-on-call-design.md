@@ -230,15 +230,50 @@ The same agent codebase deploys to production with only config changes:
 
 ## 6. Future Enhancements (Post-MVP)
 
-Noted during brainstorming, deferred from MVP scope:
+Noted during brainstorming and initial testing, deferred from MVP scope:
+
+### 6.1 Agent Tooling (High Priority)
+
+The orchestrator and sub-agents need access to real tools to be useful beyond conversation:
+
+- **Shell/command execution** — Run terminal commands (git clone, npm install, pytest, etc.)
+- **File system access** — Read, write, and edit files in a workspace directory
+- **Git operations** — Clone repos, create branches, commit, push
+- **Web search/fetch** — Research topics, read documentation
+- **Code analysis** — Read and understand codebases
+
+**Implementation approach:** LiveKit Agents supports `function_tool` decorators on the Agent class. Each tool is exposed to the LLM as a callable function. Tools should be sandboxed to a workspace directory per session.
+
+**Architecture consideration:** Tools run in the agent's Docker container. For security, each session should have an isolated workspace (volume mount or temporary directory). Sub-agents inherit a subset of tools relevant to their task.
+
+### 6.2 Session Context & Persistence (High Priority)
+
+The agent needs to maintain state across conversations and start from where it left off:
+
+- **Startup context** — Load project context, previous conversation summary, and active tasks when a session begins
+- **Session persistence** — Save conversation history, decisions made, and work-in-progress to disk/database
+- **Project profiles** — User defines projects with their repo URL, tech stack, and preferences. Agent loads the right context when a project is selected.
+- **Multi-project support** — Switch between projects mid-call ("Switch to the agent-on-call project")
+- **Resume capability** — "Continue where we left off" loads the last session's state
+
+**Implementation approach:** Store session state as JSON/YAML files in a `sessions/` directory. On session start, load the most recent session for the selected project. The orchestrator's system prompt is dynamically built from project context + conversation history.
+
+### 6.3 Transcript Display (Bug Fix — Near Term)
+
+The frontend transcript panel exists but doesn't receive transcription events from LiveKit. Need to:
+- Hook into LiveKit's `TranscriptionReceived` room event (not the voice assistant hook)
+- Display both user speech (from STT) and agent speech (from TTS) in real-time
+- This is a frontend wiring issue, not a backend issue — STT is working server-side
+
+### 6.4 Platform & Architecture
 
 1. **Communicator/Coordinator split** — Separate the orchestrator's voice interface from sub-agent coordination into two agents
 2. **Chat-based status panel** — Persistent sidebar showing all agent statuses, waiting items, and history
 3. **Direct sub-agent conversation** — User can address sub-agents by name to talk directly
 4. **Zoom connector** — Zoom Meeting SDK bot bridges audio to LiveKit room
 5. **Discord connector** — Discord bot bridges audio to LiveKit room
-6. **Session management** — Persistent sessions, reconnection, conversation history
-7. **Project/work tracking** — Track tasks across sessions, integrate with external tools
+6. **OpenRouter support** — Single API key for 100+ LLM models via OpenAI-compatible endpoint
+7. **Configurable STT/TTS providers** — Swap Deepgram/Cartesia for alternatives via env var
 
 ---
 
