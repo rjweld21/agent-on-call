@@ -275,6 +275,36 @@ The frontend transcript panel exists but doesn't receive transcription events fr
 6. **OpenRouter support** — Single API key for 100+ LLM models via OpenAI-compatible endpoint
 7. **Configurable STT/TTS providers** — Swap Deepgram/Cartesia for alternatives via env var
 
+### 6.5 Workspace Container Architecture
+
+Each project lives in its own Docker container with a persistent volume. The orchestrator manages workspace containers via Docker socket (sibling containers, not nested).
+
+**Composable base images:** Agent tools layer is a separate Dockerfile stage that copies onto any base image. Users choose a profile or provide their own:
+- `dev` (default) — python:3.11-slim + git, node, npm, gcc
+- `minimal` — alpine:3.19 + curl, jq
+- `data` — python:3.11-slim + pandas, numpy, matplotlib
+- `custom` — user's own Dockerfile
+
+Implementation: `ARG BASE_IMAGE=python:3.11-slim` in Dockerfile, build with `--build-arg`.
+
+**Text input box:** Frontend includes a text input alongside voice. Sent via LiveKit data channel. Agent receives both voice (STT) and text input. Essential for URLs, code snippets, and anything impractical to spell out verbally.
+
+### 6.6 Security Considerations (Managed Cloud Only)
+
+For the local open-source version, agent infrastructure awareness is a feature — the user owns the machine.
+
+For the managed cloud product, the following security workstream is required before launch:
+
+| Vector | Mitigation |
+|--------|-----------|
+| Docker socket exposure | Workspace containers never get socket access. Only orchestrator. |
+| API key leakage | Keys in orchestrator only. Workspaces get scoped proxy access. |
+| Infrastructure probing | System prompt restrictions. Workspace agents get no infra context. |
+| Network scanning | Isolated network per workspace. Outbound via allow-list proxy. |
+| Filesystem escape | Tools restricted to /workspace/. Read-only root FS. No /proc, /sys. |
+| Cross-tenant access | Isolated volumes per user. Container namespace isolation. |
+| Resource exhaustion | CPU/memory limits per container. Auto-terminate on idle timeout. |
+
 ---
 
 ## 7. Testing Strategy
