@@ -298,7 +298,55 @@ For the managed cloud product, implement resource monitoring per workspace:
 - **Scale recommendations** — Suggest infrastructure tier upgrades when usage patterns indicate need
 - **Billing integration** — Resource usage feeds into per-user billing for the managed service
 
-### 6.6 Platform & Architecture
+### 6.6 Audio Echo Cancellation
+
+When the agent speaks via TTS, the speaker audio is picked up by the user's microphone, causing:
+- STT confusion (agent's own speech gets transcribed as user input)
+- Interruption detection issues (agent thinks user is speaking when it's hearing its own voice)
+- Garbled transcription when user tries to talk over the agent
+
+**Mitigations to explore:**
+- LiveKit's built-in echo cancellation (WebRTC has AEC — verify it's enabled)
+- Silero VAD tuning — increase speech detection threshold to ignore lower-volume echo
+- LiveKit `noise-cancellation` plugin (BVC/BVCTelephony) — specifically designed for this
+- Frontend: ensure `echoCancellation: true` in audio constraints (browser-level AEC)
+- If using headphones: problem disappears entirely (note this in docs as recommendation)
+
+### 6.7 Workspace Environment Awareness
+
+The orchestrator's system prompt should convey that:
+- It operates in an isolated workspace (separate from the user's machine)
+- Web apps spun up inside the workspace are NOT accessible to the user
+- The user and agent are on "two separate computers" — files, ports, and services don't cross over
+- Terminal output from commands should be visible to the user in the UI
+
+### 6.8 Terminal / Command Output Display (UI)
+
+The frontend needs a terminal-like panel showing:
+- Commands the agent runs and their output
+- Real-time streaming of long-running commands
+- Separate from the transcript — this is "what the agent is doing" vs "what we're talking about"
+- Future: sub-agent communication tab showing orchestrator ↔ sub-agent messages
+
+### 6.9 Sub-Agent Communication Visibility (Future)
+
+- Separate tab or panel showing all connected sub-agents
+- Communication log: messages between orchestrator and each sub-agent
+- Expandable per-agent view showing their task, status, and full message history
+- Real-time updates as messages flow
+
+### 6.10 Transcription Logging & Timestamps
+
+- Save full transcript to file after each session (JSON format with timestamps)
+- Display timestamps on each transcript entry in the UI (HH:MM:SS format)
+- Track pause duration between entries (useful for debugging VAD sensitivity)
+- Log location: workspace volume `.aoc/transcripts/YYYY-MM-DD-HHMMSS.json`
+
+### 6.11 Orchestrator Static Name
+
+The orchestrator agent should always appear as "Orchestrator" (or "Main Agent") in the participant list, not a randomly generated identity. Set via LiveKit agent identity/name configuration.
+
+### 6.12 Platform & Architecture
 
 1. **Communicator/Coordinator split** — Separate the orchestrator's voice interface from sub-agent coordination into two agents
 2. **Chat-based status panel** — Persistent sidebar showing all agent statuses, waiting items, and history

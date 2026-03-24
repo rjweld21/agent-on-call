@@ -66,6 +66,9 @@ async def orchestrator_session(ctx: agents.JobContext):
         vad=silero.VAD.load(),
     )
 
+    # Set orchestrator display name
+    await ctx.room.local_participant.set_name("Orchestrator")
+
     await session.start(
         room=ctx.room,
         agent=OrchestratorAgent(),

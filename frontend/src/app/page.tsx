@@ -267,6 +267,9 @@ function AgentInterface() {
                 padding: "0.3rem 0", fontSize: "0.85rem",
                 borderBottom: i < transcript.length - 1 ? "1px solid #334155" : "none",
               }}>
+                <span style={{ color: "#475569", fontSize: "0.7rem", marginRight: "0.5rem" }}>
+                  {entry.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </span>
                 <span style={{
                   color: entry.speaker === "agent" ? "#fcd34d"
                     : entry.speaker === "user-text" ? "#a78bfa"
