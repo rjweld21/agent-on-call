@@ -98,8 +98,21 @@ Sub-agents are lightweight LiveKit Agents that join the room as named participan
 - **Creation:** Orchestrator spawns a new agent process, which joins the LiveKit room with a descriptive display name
 - **Visibility:** Appears in the participant list so the user can see active agents
 - **Communication:** Reports status and results to the orchestrator via LiveKit data channels or an internal message bus
-- **No voice:** Sub-agents do not listen to or produce audio in MVP. The orchestrator relays all communication
+- **No voice (MVP):** Sub-agents do not subscribe to audio or run STT. The orchestrator relays all relevant information via RPC. This keeps costs at 1x STT regardless of sub-agent count.
 - **Lifecycle:** Joins room → works on task → reports result (or queues for guidance) → leaves room when done
+
+**Sub-agent communication model (MVP — Model B):**
+- Sub-agents communicate exclusively with the orchestrator via LiveKit RPCs
+- They do NOT subscribe to user audio or run their own STT
+- The orchestrator decides what information is relevant and relays it
+- Cost: Only orchestrator runs STT/TTS. Sub-agents only use LLM when processing relayed messages.
+
+**Future hybrid model (premium option):**
+- Sub-agents can optionally subscribe to the orchestrator's STT transcript stream (text, not audio)
+- Key optimization: ONE STT stream produces text, which is fanned out to N listening agents — no per-agent STT cost
+- Sub-agents evaluate the transcript text via LLM and can proactively flag relevant information
+- Added cost: only LLM evaluation per listening agent (no additional STT)
+- User toggle: "Allow agents to listen in" (more responsive, slightly higher LLM cost) vs "Agents work independently" (default, lowest cost)
 
 **Sub-agent states:**
 - `working` — actively processing the task
@@ -230,15 +243,148 @@ The same agent codebase deploys to production with only config changes:
 
 ## 6. Future Enhancements (Post-MVP)
 
-Noted during brainstorming, deferred from MVP scope:
+Noted during brainstorming and initial testing, deferred from MVP scope:
+
+### 6.1 Agent Tooling (High Priority)
+
+The orchestrator and sub-agents need access to real tools to be useful beyond conversation:
+
+- **Shell/command execution** — Run terminal commands (git clone, npm install, pytest, etc.)
+- **File system access** — Read, write, and edit files in a workspace directory
+- **Git operations** — Clone repos, create branches, commit, push
+- **Web search/fetch** — Research topics, read documentation
+- **Code analysis** — Read and understand codebases
+
+**Implementation approach:** LiveKit Agents supports `function_tool` decorators on the Agent class. Each tool is exposed to the LLM as a callable function. Tools should be sandboxed to a workspace directory per session.
+
+**Architecture consideration:** Tools run in the agent's Docker container. For security, each session should have an isolated workspace (volume mount or temporary directory). Sub-agents inherit a subset of tools relevant to their task.
+
+### 6.2 Session Context & Persistence (High Priority)
+
+The agent needs to maintain state across conversations and start from where it left off:
+
+- **Startup context** — Load project context, previous conversation summary, and active tasks when a session begins
+- **Session persistence** — Save conversation history, decisions made, and work-in-progress to disk/database
+- **Project profiles** — User defines projects with their repo URL, tech stack, and preferences. Agent loads the right context when a project is selected.
+- **Multi-project support** — Switch between projects mid-call ("Switch to the agent-on-call project")
+- **Resume capability** — "Continue where we left off" loads the last session's state
+
+**Implementation approach:** Store session state as JSON/YAML files in a `sessions/` directory. On session start, load the most recent session for the selected project. The orchestrator's system prompt is dynamically built from project context + conversation history.
+
+### 6.3 Transcript Display — DONE
+
+Fixed: Using `useVoiceAssistant().agentTranscriptions` for agent speech, `useTrackTranscription` for user voice, and `useChat()` for text messages. All merged into unified time-sorted transcript.
+
+### 6.4 Sub-Agent UX (M6b — Future)
+
+When sub-agents are implemented, the frontend needs:
+
+- **Task-based naming** — Sub-agent display names derived from their task (e.g., "Research - DB Selection", "Code Review - Auth Module"), not generic names
+- **Activity indicators in participant list:**
+  - Green pulse / glow = agent is actively working
+  - Yellow / amber = agent needs user feedback (waiting in guidance queue)
+  - Dimmed / gray = agent completed its task
+- **Highlight on communication** — When the orchestrator is relaying to/from a specific sub-agent, that agent's name highlights in the participant list so the user knows which agent is being discussed
+- **Notification badges** — Sub-agents with pending guidance requests show a badge count
+
+### 6.5 Managed Service Monitoring (Cloud — Future)
+
+For the managed cloud product, implement resource monitoring per workspace:
+
+- **Container metrics** — CPU usage, memory consumption per workspace container
+- **Volume usage** — Storage consumed per workspace volume (track growth over time)
+- **User-facing dashboard** — Show users their resource consumption
+- **Threshold alerts** — Notify users when approaching limits (e.g., "Workspace is using 80% of allocated storage")
+- **Scale recommendations** — Suggest infrastructure tier upgrades when usage patterns indicate need
+- **Billing integration** — Resource usage feeds into per-user billing for the managed service
+
+### 6.6 Audio Echo Cancellation
+
+When the agent speaks via TTS, the speaker audio is picked up by the user's microphone, causing:
+- STT confusion (agent's own speech gets transcribed as user input)
+- Interruption detection issues (agent thinks user is speaking when it's hearing its own voice)
+- Garbled transcription when user tries to talk over the agent
+
+**Mitigations to explore:**
+- LiveKit's built-in echo cancellation (WebRTC has AEC — verify it's enabled)
+- Silero VAD tuning — increase speech detection threshold to ignore lower-volume echo
+- LiveKit `noise-cancellation` plugin (BVC/BVCTelephony) — specifically designed for this
+- Frontend: ensure `echoCancellation: true` in audio constraints (browser-level AEC)
+- If using headphones: problem disappears entirely (note this in docs as recommendation)
+
+### 6.7 Workspace Environment Awareness
+
+The orchestrator's system prompt should convey that:
+- It operates in an isolated workspace (separate from the user's machine)
+- Web apps spun up inside the workspace are NOT accessible to the user
+- The user and agent are on "two separate computers" — files, ports, and services don't cross over
+- Terminal output from commands should be visible to the user in the UI
+
+### 6.8 Terminal / Command Output Display (UI)
+
+The frontend needs a terminal-like panel showing:
+- Commands the agent runs and their output
+- Real-time streaming of long-running commands
+- Separate from the transcript — this is "what the agent is doing" vs "what we're talking about"
+- Future: sub-agent communication tab showing orchestrator ↔ sub-agent messages
+
+### 6.9 Sub-Agent Communication Visibility (Future)
+
+- Separate tab or panel showing all connected sub-agents
+- Communication log: messages between orchestrator and each sub-agent
+- Expandable per-agent view showing their task, status, and full message history
+- Real-time updates as messages flow
+
+### 6.10 Transcription Logging & Timestamps
+
+- Save full transcript to file after each session (JSON format with timestamps)
+- Display timestamps on each transcript entry in the UI (HH:MM:SS format)
+- Track pause duration between entries (useful for debugging VAD sensitivity)
+- Log location: workspace volume `.aoc/transcripts/YYYY-MM-DD-HHMMSS.json`
+
+### 6.11 Orchestrator Static Name
+
+The orchestrator agent should always appear as "Orchestrator" (or "Main Agent") in the participant list, not a randomly generated identity. Set via LiveKit agent identity/name configuration.
+
+### 6.12 Platform & Architecture
 
 1. **Communicator/Coordinator split** — Separate the orchestrator's voice interface from sub-agent coordination into two agents
 2. **Chat-based status panel** — Persistent sidebar showing all agent statuses, waiting items, and history
 3. **Direct sub-agent conversation** — User can address sub-agents by name to talk directly
 4. **Zoom connector** — Zoom Meeting SDK bot bridges audio to LiveKit room
 5. **Discord connector** — Discord bot bridges audio to LiveKit room
-6. **Session management** — Persistent sessions, reconnection, conversation history
-7. **Project/work tracking** — Track tasks across sessions, integrate with external tools
+6. **OpenRouter support** — Single API key for 100+ LLM models via OpenAI-compatible endpoint
+7. **Configurable STT/TTS providers** — Swap Deepgram/Cartesia for alternatives via env var
+
+### 6.5 Workspace Container Architecture
+
+Each project lives in its own Docker container with a persistent volume. The orchestrator manages workspace containers via Docker socket (sibling containers, not nested).
+
+**Composable base images:** Agent tools layer is a separate Dockerfile stage that copies onto any base image. Users choose a profile or provide their own:
+- `dev` (default) — python:3.11-slim + git, node, npm, gcc
+- `minimal` — alpine:3.19 + curl, jq
+- `data` — python:3.11-slim + pandas, numpy, matplotlib
+- `custom` — user's own Dockerfile
+
+Implementation: `ARG BASE_IMAGE=python:3.11-slim` in Dockerfile, build with `--build-arg`.
+
+**Text input box:** Frontend includes a text input alongside voice. Sent via LiveKit data channel. Agent receives both voice (STT) and text input. Essential for URLs, code snippets, and anything impractical to spell out verbally.
+
+### 6.6 Security Considerations (Managed Cloud Only)
+
+For the local open-source version, agent infrastructure awareness is a feature — the user owns the machine.
+
+For the managed cloud product, the following security workstream is required before launch:
+
+| Vector | Mitigation |
+|--------|-----------|
+| Docker socket exposure | Workspace containers never get socket access. Only orchestrator. |
+| API key leakage | Keys in orchestrator only. Workspaces get scoped proxy access. |
+| Infrastructure probing | System prompt restrictions. Workspace agents get no infra context. |
+| Network scanning | Isolated network per workspace. Outbound via allow-list proxy. |
+| Filesystem escape | Tools restricted to /workspace/. Read-only root FS. No /proc, /sys. |
+| Cross-tenant access | Isolated volumes per user. Container namespace isolation. |
+| Resource exhaustion | CPU/memory limits per container. Auto-terminate on idle timeout. |
 
 ---
 
