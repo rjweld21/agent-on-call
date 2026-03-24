@@ -8,12 +8,16 @@ import {
   DisconnectButton,
   useParticipants,
   useLocalParticipant,
+  useTrackTranscription,
+  useChat,
 } from "@livekit/components-react";
+import { Track } from "livekit-client";
 import "@livekit/components-styles";
-import { useCallback, useState, useEffect, useRef } from "react";
+import { useCallback, useState, useEffect, useRef, KeyboardEvent } from "react";
 
 interface TranscriptEntry {
-  speaker: "user" | "agent";
+  id: string;
+  speaker: "user" | "agent" | "user-text";
   text: string;
   timestamp: Date;
 }
@@ -115,21 +119,70 @@ function MicMonitor() {
 }
 
 function AgentInterface() {
-  const { state, audioTrack, agent } = useVoiceAssistant();
+  const { state, audioTrack } = useVoiceAssistant();
+  const { agentTranscriptions } = useVoiceAssistant();
   const participants = useParticipants();
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const { localParticipant, microphoneTrack } = useLocalParticipant();
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const [textInput, setTextInput] = useState("");
 
-  useEffect(() => {
-    if (!agent?.participant) return;
-    return () => {};
-  }, [agent]);
+  // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
+  const micTrackRef = microphoneTrack
+    ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone }
+    : { participant: localParticipant, source: Track.Source.Microphone };
 
+  const { segments: userSegments } = useTrackTranscription(micTrackRef);
+  const { chatMessages, send, isSending } = useChat();
+
+  // Build a unified, time-sorted transcript from agent transcriptions,
+  // user voice transcriptions, and chat messages. Only show final segments.
+  const transcript: TranscriptEntry[] = [
+    ...agentTranscriptions
+      .filter((seg) => seg.final)
+      .map((seg) => ({
+        id: `agent-${seg.id}`,
+        speaker: "agent" as const,
+        text: seg.text,
+        timestamp: new Date(seg.firstReceivedTime ?? 0),
+      })),
+    ...userSegments
+      .filter((seg) => seg.final)
+      .map((seg) => ({
+        id: `user-${seg.id}`,
+        speaker: "user" as const,
+        text: seg.text,
+        timestamp: new Date(seg.firstReceivedTime ?? 0),
+      })),
+    ...chatMessages.map((msg) => ({
+      id: `chat-${msg.timestamp}`,
+      speaker: "user-text" as const,
+      text: msg.message,
+      timestamp: new Date(msg.timestamp),
+    })),
+  ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+  // Auto-scroll transcript to bottom whenever entries change
   useEffect(() => {
     if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
-  }, [transcript]);
+  }, [transcript.length]);
+
+  const sendMessage = useCallback(async () => {
+    const msg = textInput.trim();
+    if (!msg || isSending) return;
+    setTextInput("");
+    await send(msg);
+  }, [textInput, isSending, send]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        sendMessage();
+      }
+    },
+    [sendMessage],
+  );
 
   return (
     <div
@@ -192,34 +245,78 @@ function AgentInterface() {
       </div>
 
       {/* Transcript */}
-      <div ref={transcriptRef} style={{
-        width: "100%", maxWidth: "500px", maxHeight: "200px", overflowY: "auto",
-        border: "1px solid #334155", borderRadius: "8px", padding: "0.8rem",
-        background: "#1e293b",
-      }}>
-        <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.5rem" }}>
-          Transcript
-        </h3>
-        {transcript.length === 0 ? (
-          <p style={{ color: "#475569", fontSize: "0.8rem", fontStyle: "italic" }}>
-            Speak to start the conversation...
-          </p>
-        ) : (
-          transcript.map((entry, i) => (
-            <div key={i} style={{
-              padding: "0.3rem 0", fontSize: "0.85rem",
-              borderBottom: i < transcript.length - 1 ? "1px solid #1e293b" : "none",
-            }}>
-              <span style={{
-                color: entry.speaker === "agent" ? "#fcd34d" : "#60a5fa",
-                fontWeight: "bold", marginRight: "0.5rem",
+      <div style={{ width: "100%", maxWidth: "500px" }}>
+        <div
+          ref={transcriptRef}
+          style={{
+            maxHeight: "220px", overflowY: "auto",
+            border: "1px solid #334155", borderRadius: "8px 8px 0 0",
+            padding: "0.8rem", background: "#1e293b",
+          }}
+        >
+          <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.5rem", margin: "0 0 0.5rem 0" }}>
+            Transcript
+          </h3>
+          {transcript.length === 0 ? (
+            <p style={{ color: "#475569", fontSize: "0.8rem", fontStyle: "italic", margin: 0 }}>
+              Speak or type to start the conversation...
+            </p>
+          ) : (
+            transcript.map((entry, i) => (
+              <div key={entry.id} style={{
+                padding: "0.3rem 0", fontSize: "0.85rem",
+                borderBottom: i < transcript.length - 1 ? "1px solid #334155" : "none",
               }}>
-                {entry.speaker === "agent" ? "Agent:" : "You:"}
-              </span>
-              <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
-            </div>
-          ))
-        )}
+                <span style={{
+                  color: entry.speaker === "agent" ? "#fcd34d"
+                    : entry.speaker === "user-text" ? "#a78bfa"
+                    : "#60a5fa",
+                  fontWeight: "bold", marginRight: "0.5rem",
+                }}>
+                  {entry.speaker === "agent" ? "Agent:"
+                    : entry.speaker === "user-text" ? "You (text):"
+                    : "You:"}
+                </span>
+                <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Text input */}
+        <div style={{
+          display: "flex",
+          border: "1px solid #334155", borderTop: "1px solid #1e3a5f",
+          borderRadius: "0 0 8px 8px", overflow: "hidden",
+          background: "#0f172a",
+        }}>
+          <input
+            type="text"
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message, paste a URL..."
+            style={{
+              flex: 1, padding: "0.6rem 0.8rem",
+              background: "transparent", border: "none", outline: "none",
+              color: "#e2e8f0", fontSize: "0.85rem",
+            }}
+          />
+          <button
+            onClick={sendMessage}
+            disabled={isSending || !textInput.trim()}
+            style={{
+              padding: "0.6rem 1rem",
+              background: isSending || !textInput.trim() ? "#1e293b" : "#4f46e5",
+              border: "none", color: isSending || !textInput.trim() ? "#475569" : "#e2e8f0",
+              cursor: isSending || !textInput.trim() ? "default" : "pointer",
+              fontSize: "0.85rem", fontWeight: "bold",
+              transition: "background 0.15s",
+            }}
+          >
+            Send
+          </button>
+        </div>
       </div>
 
       <DisconnectButton style={{
