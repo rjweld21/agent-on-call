@@ -273,7 +273,7 @@ function AgentInterface() {
                 return (
                   <div key={entry.id}>
                     {gapText && (
-                      <div style={{
+                      <div data-testid="gap-indicator" style={{
                         textAlign: "center", color: "#64748b", fontSize: "0.7rem",
                         fontStyle: "italic", padding: "0.2rem 0",
                       }}>
