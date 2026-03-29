@@ -755,3 +755,190 @@ class TestAnalyzeCodebaseTool:
             result = await agent.analyze_codebase(ctx, path="/workspace", query="def main")
             agent._code.analyze.assert_awaited_once_with(path="/workspace", query="def main", depth=3)
             assert "Python" in result
+
+
+class TestTerminalWiring:
+    """Tests for command_output emission from all tool methods (story #57)."""
+
+    @pytest.mark.asyncio
+    async def test_git_status_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "On branch main\nnothing to commit", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.git_status(ctx)
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            # Find command_output message
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "git_status should emit command_output"
+            assert cmd_outputs[0]["command"] == "git status"
+            assert "On branch main" in cmd_outputs[0]["output"]
+            assert cmd_outputs[0]["exitCode"] == 0
+            assert cmd_outputs[0]["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_git_commit_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            # git add succeeds, then git commit succeeds
+            mock_ws.exec_command.side_effect = [
+                (0, "", ""),  # git add
+                (0, "[main abc123] feat: test commit\n 1 file changed", ""),  # git commit
+            ]
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.git_commit(ctx, message="feat: test commit")
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "git_commit should emit command_output"
+            assert "git" in cmd_outputs[0]["command"]
+            assert "commit" in cmd_outputs[0]["command"]
+            assert cmd_outputs[0]["exitCode"] == 0
+
+    @pytest.mark.asyncio
+    async def test_git_push_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "", "To origin\n * [new branch] main -> main")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            with patch.dict(os.environ, {}, clear=False):
+                await agent.git_push(ctx)
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "git_push should emit command_output"
+            assert "git push" in cmd_outputs[0]["command"]
+            assert cmd_outputs[0]["exitCode"] == 0
+
+    @pytest.mark.asyncio
+    async def test_web_search_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.search = AsyncMock(return_value="1. Result One\n2. Result Two")
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.web_search(ctx, query="python async")
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "web_search should emit command_output"
+            assert "search" in cmd_outputs[0]["command"]
+            assert "python async" in cmd_outputs[0]["command"]
+            assert cmd_outputs[0]["exitCode"] == 0
+
+    @pytest.mark.asyncio
+    async def test_web_fetch_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.fetch = AsyncMock(return_value="Page content here...")
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.web_fetch(ctx, url="https://example.com/docs")
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "web_fetch should emit command_output"
+            assert "fetch" in cmd_outputs[0]["command"]
+            assert "example.com" in cmd_outputs[0]["command"]
+            assert cmd_outputs[0]["exitCode"] == 0
+
+    @pytest.mark.asyncio
+    async def test_git_status_error_emits_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.side_effect = RuntimeError("No active workspace")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            result = await agent.git_status(ctx)
+
+            assert "Error" in result
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1, "git_status error should emit command_output"
+            assert cmd_outputs[0]["exitCode"] == -1
+
+    @pytest.mark.asyncio
+    async def test_web_search_error_emits_command_output_with_exit_code_1(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.search = AsyncMock(return_value="Error: search failed")
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.web_search(ctx, query="test")
+
+            calls = mock_room.local_participant.publish_data.call_args_list
+            cmd_outputs = [
+                json.loads(c[0][0].decode()) for c in calls
+                if json.loads(c[0][0].decode()).get("type") == "command_output"
+            ]
+            assert len(cmd_outputs) >= 1
+            assert cmd_outputs[0]["exitCode"] == 1
