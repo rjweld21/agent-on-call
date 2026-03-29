@@ -1,0 +1,8 @@
+# Ephemeral orchestrator state (runtime only)
+orchestrator-state.json
+
+# Session transcripts (contain user conversations — never commit)
+transcripts/
+
+# Sessions (future — may want to track these)
+# sessions/
