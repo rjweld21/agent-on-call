@@ -14,6 +14,7 @@ import {
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
 import { useCallback, useState, useEffect, useRef, KeyboardEvent } from "react";
+import { formatElapsedTime, detectGap, getSessionStartTime } from "@/lib/transcript-time";
 
 interface TranscriptEntry {
   id: string;
@@ -262,27 +263,49 @@ function AgentInterface() {
               Speak or type to start the conversation...
             </p>
           ) : (
-            transcript.map((entry, i) => (
-              <div key={entry.id} style={{
-                padding: "0.3rem 0", fontSize: "0.85rem",
-                borderBottom: i < transcript.length - 1 ? "1px solid #334155" : "none",
-              }}>
-                <span style={{ color: "#475569", fontSize: "0.7rem", marginRight: "0.5rem" }}>
-                  {entry.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                </span>
-                <span style={{
-                  color: entry.speaker === "agent" ? "#fcd34d"
-                    : entry.speaker === "user-text" ? "#a78bfa"
-                    : "#60a5fa",
-                  fontWeight: "bold", marginRight: "0.5rem",
-                }}>
-                  {entry.speaker === "agent" ? "Agent:"
-                    : entry.speaker === "user-text" ? "You (text):"
-                    : "You:"}
-                </span>
-                <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
-              </div>
-            ))
+            (() => {
+              const sessionStart = getSessionStartTime(transcript);
+              return transcript.map((entry, i) => {
+                const gapText = i > 0 ? detectGap(transcript[i - 1].timestamp, entry.timestamp) : null;
+                const elapsedMs = sessionStart
+                  ? entry.timestamp.getTime() - sessionStart.getTime()
+                  : 0;
+                return (
+                  <div key={entry.id}>
+                    {gapText && (
+                      <div data-testid="gap-indicator" style={{
+                        textAlign: "center", color: "#64748b", fontSize: "0.7rem",
+                        fontStyle: "italic", padding: "0.2rem 0",
+                      }}>
+                        --- {gapText} ---
+                      </div>
+                    )}
+                    <div style={{
+                      padding: "0.3rem 0", fontSize: "0.85rem",
+                      borderBottom: i < transcript.length - 1 ? "1px solid #334155" : "none",
+                    }}>
+                      <span data-testid="transcript-timestamp" style={{
+                        color: "#475569", fontSize: "0.7rem", marginRight: "0.5rem",
+                        fontFamily: "monospace",
+                      }}>
+                        {formatElapsedTime(elapsedMs)}
+                      </span>
+                      <span style={{
+                        color: entry.speaker === "agent" ? "#fcd34d"
+                          : entry.speaker === "user-text" ? "#a78bfa"
+                          : "#60a5fa",
+                        fontWeight: "bold", marginRight: "0.5rem",
+                      }}>
+                        {entry.speaker === "agent" ? "Agent:"
+                          : entry.speaker === "user-text" ? "You (text):"
+                          : "You:"}
+                      </span>
+                      <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
+                    </div>
+                  </div>
+                );
+              });
+            })()
           )}
         </div>
 
