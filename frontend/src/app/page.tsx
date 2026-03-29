@@ -22,6 +22,7 @@ import {
 } from "@/lib/transcript-time";
 import { SettingsProvider, useSettings } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
+import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
 
 function MicMonitor() {
   const { microphoneTrack } = useLocalParticipant();
@@ -127,6 +128,38 @@ function AgentInterface() {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textInput, setTextInput] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+
+  // Track agent state transitions as activity items
+  const prevStateRef = useRef(state);
+  useEffect(() => {
+    if (state !== prevStateRef.current) {
+      const prevState = prevStateRef.current;
+      prevStateRef.current = state;
+
+      if (state === "thinking") {
+        setActivities((prev) => [
+          ...prev,
+          {
+            id: `thinking-${Date.now()}`,
+            type: "thinking" as const,
+            text: "Processing...",
+            timestamp: new Date(),
+          },
+        ]);
+      } else if (state === "speaking" && prevState === "thinking") {
+        setActivities((prev) => [
+          ...prev,
+          {
+            id: `result-${Date.now()}`,
+            type: "result" as const,
+            text: "Responding to user",
+            timestamp: new Date(),
+          },
+        ]);
+      }
+    }
+  }, [state]);
 
   // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
   const micTrackRef = microphoneTrack
@@ -246,6 +279,12 @@ function AgentInterface() {
 
       {/* Mic Monitor */}
       <MicMonitor />
+
+      {/* Agent Thinking/Activity Panel */}
+      <ThinkingPanel
+        activities={activities}
+        isAgentWorking={state === "thinking"}
+      />
 
       {/* Participants */}
       <div style={{ width: "100%", maxWidth: "500px" }}>
