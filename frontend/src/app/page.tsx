@@ -670,7 +670,11 @@ function HomeInner() {
           token={connectionDetails.token}
           serverUrl={connectionDetails.url}
           connect={true}
-          audio={true}
+          audio={{
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }}
           onDisconnected={disconnect}
           style={{ height: "100%" }}
         >
