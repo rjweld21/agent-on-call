@@ -14,6 +14,7 @@ from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent, ORCHESTRATOR_INSTRUCTIONS
 from agent_on_call.prompt_builder import PromptBuilder, VERBOSITY_PROMPTS, TEXT_MODE_INSTRUCTION
+from agent_on_call.transcript import SessionTranscript
 from agent_on_call.turn_taking import DEFAULT_VAD_CONFIG, DEFAULT_TURN_TAKING_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -368,6 +369,38 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
+
+    # --- Transcript tracking ---
+    transcript = SessionTranscript(session_id=ctx.room.name or "unknown")
+    transcript.add_participant(
+        ctx.room.local_participant.identity,
+        ctx.room.local_participant.name or "Orchestrator",
+    )
+    for p in ctx.room.remote_participants.values():
+        transcript.add_participant(p.identity, p.name or p.identity)
+
+    TRANSCRIPT_DIR = os.path.join(".aoc", "transcripts")
+
+    @session.on("user_input_transcription")
+    def _on_user_transcription(event):
+        if hasattr(event, "text") and event.text:
+            transcript.add_entry(speaker="user", content=event.text, entry_type="speech")
+
+    @session.on("agent_speech_committed")
+    def _on_agent_speech(event):
+        if hasattr(event, "text") and event.text:
+            transcript.add_entry(speaker="agent", content=event.text, entry_type="speech")
+
+    async def _save_transcript():
+        """Save transcript on session end."""
+        transcript.end_session()
+        try:
+            filepath = transcript.save(TRANSCRIPT_DIR)
+            logger.info("Session transcript saved to %s", filepath)
+        except Exception as e:
+            logger.error("Failed to save transcript: %s", e)
+
+    ctx.add_shutdown_callback(_save_transcript)
 
     async def _notify_tts_disabled(reason: str):
         """Send a tts_status message to the frontend via data channel."""
