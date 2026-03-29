@@ -9,6 +9,7 @@ from livekit.agents import AgentServer, AgentSession
 from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent
+from agent_on_call.turn_taking import DEFAULT_VAD_CONFIG, DEFAULT_TURN_TAKING_CONFIG
 
 load_dotenv(".env.local")
 load_dotenv(".env")
@@ -110,6 +111,9 @@ async def orchestrator_session(ctx: agents.JobContext):
         agent.instructions + f"\n\nVerbosity directive: {verbosity_directive}"
     )
 
+    vad_cfg = DEFAULT_VAD_CONFIG
+    tt_cfg = DEFAULT_TURN_TAKING_CONFIG
+
     session = AgentSession(
         stt=deepgram.STT(
             model="nova-3",
@@ -119,7 +123,17 @@ async def orchestrator_session(ctx: agents.JobContext):
         tts=cartesia.TTS(
             api_key=os.environ.get("CARTESIA_API_KEY"),
         ),
-        vad=silero.VAD.load(),
+        vad=silero.VAD.load(
+            min_speech_duration=vad_cfg.min_speech_duration,
+            min_silence_duration=vad_cfg.min_silence_duration,
+            prefix_padding_duration=vad_cfg.prefix_padding_duration,
+            activation_threshold=vad_cfg.activation_threshold,
+            max_buffered_speech=vad_cfg.max_buffered_speech,
+        ),
+        min_endpointing_delay=tt_cfg.min_endpointing_delay,
+        max_endpointing_delay=tt_cfg.max_endpointing_delay,
+        min_interruption_duration=tt_cfg.min_interruption_duration,
+        min_interruption_words=tt_cfg.min_interruption_words,
     )
 
     await session.start(
