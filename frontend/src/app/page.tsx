@@ -23,6 +23,7 @@ import {
 import { SettingsProvider, useSettings } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
 import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
+import { MuteButton } from "@/app/components/MuteButton";
 
 function MicMonitor() {
   const { microphoneTrack } = useLocalParticipant();
@@ -401,13 +402,17 @@ function AgentInterface() {
         </div>
       </div>
 
-      <DisconnectButton style={{
-        padding: "0.5rem 1.5rem", borderRadius: "8px",
-        border: "1px solid #dc2626", background: "#7f1d1d",
-        color: "#fca5a5", cursor: "pointer", fontSize: "0.9rem",
-      }}>
-        Leave Call
-      </DisconnectButton>
+      {/* Call Controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <MuteButton />
+        <DisconnectButton style={{
+          padding: "0.5rem 1.5rem", borderRadius: "8px",
+          border: "1px solid #dc2626", background: "#7f1d1d",
+          color: "#fca5a5", cursor: "pointer", fontSize: "0.9rem",
+        }}>
+          Leave Call
+        </DisconnectButton>
+      </div>
 
       <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
