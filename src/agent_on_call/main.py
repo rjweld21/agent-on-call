@@ -1,5 +1,6 @@
 """Agent On Call entrypoint — registers agent sessions with LiveKit."""
 
+import asyncio
 import json
 import logging
 import os
@@ -189,22 +190,10 @@ def _check_tts_available() -> tuple[bool, str]:
 
 
 TTS_STATUS_MESSAGES = {
-    "no_key": (
-        "Voice responses unavailable. "
-        "Add a Cartesia API key in settings for voice responses."
-    ),
-    "auth_failed": (
-        "Voice responses unavailable. "
-        "Cartesia API key is invalid."
-    ),
-    "no_credits": (
-        "Voice responses unavailable. "
-        "Cartesia account has no credits remaining."
-    ),
-    "network_error": (
-        "Voice responses unavailable. "
-        "Could not reach Cartesia API."
-    ),
+    "no_key": ("Voice responses unavailable. " "Add a Cartesia API key in settings for voice responses."),
+    "auth_failed": ("Voice responses unavailable. " "Cartesia API key is invalid."),
+    "no_credits": ("Voice responses unavailable. " "Cartesia account has no credits remaining."),
+    "network_error": ("Voice responses unavailable. " "Could not reach Cartesia API."),
 }
 
 
@@ -338,11 +327,13 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     async def _notify_tts_disabled(reason: str):
         """Send a tts_status message to the frontend via data channel."""
-        tts_status_msg = json.dumps({
-            "type": "tts_status",
-            "available": False,
-            "reason": reason,
-        })
+        tts_status_msg = json.dumps(
+            {
+                "type": "tts_status",
+                "available": False,
+                "reason": reason,
+            }
+        )
         try:
             await ctx.room.local_participant.publish_data(
                 tts_status_msg.encode(),
@@ -361,12 +352,13 @@ async def orchestrator_session(ctx: agents.JobContext):
     tts_disabled_at_runtime = False
 
     @session.on("error")
-    async def _on_session_error(error):
+    def _on_session_error(error):
         nonlocal tts_disabled_at_runtime
         if tts_disabled_at_runtime:
             return
 
         from livekit.agents import tts as tts_module
+
         if not isinstance(error, tts_module.TTSError):
             return
 
@@ -389,11 +381,9 @@ async def orchestrator_session(ctx: agents.JobContext):
         session._tts = None
 
         # Update agent instructions to reflect text-only mode
-        agent._raw_instructions = _build_verbosity_instructions(
-            ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity
-        )
+        agent._raw_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity)
 
-        await _notify_tts_disabled(reason)
+        asyncio.create_task(_notify_tts_disabled(reason))
 
     # --- Mid-session settings via data channel ---
     async def _on_data_received(data_packet: rtc.DataPacket):
