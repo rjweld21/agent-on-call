@@ -290,8 +290,10 @@ async def _apply_settings_update(
     # Apply verbosity change
     if update["verbosity"] is not None and update["verbosity"] != current_verbosity:
         current_verbosity = update["verbosity"]
-        agent._raw_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, current_verbosity)
+        new_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, current_verbosity)
+        await agent.update_instructions(new_instructions)
         logger.info("Mid-session verbosity updated to %d", current_verbosity)
+        logger.debug("New instructions (verbosity=%d): %s", current_verbosity, new_instructions[:200])
         changed = True
 
     # Apply model change
@@ -299,8 +301,9 @@ async def _apply_settings_update(
         current_model = update["model"]
         try:
             new_llm = _build_llm(model=current_model)
-            session._llm = new_llm
+            session._llm = new_llm  # No public setter in LiveKit SDK — _llm is read each call
             logger.info("Mid-session model updated to %s", current_model)
+            logger.debug("LLM instance replaced on session for model=%s", current_model)
             changed = True
         except Exception as e:
             logger.error("Failed to switch model to %s: %s", current_model, e)
@@ -344,7 +347,9 @@ async def orchestrator_session(ctx: agents.JobContext):
     base_instructions = ORCHESTRATOR_INSTRUCTIONS
     if not tts_available:
         base_instructions += TEXT_MODE_INSTRUCTION
-    agent._raw_instructions = _build_verbosity_instructions(base_instructions, verbosity)
+    # Set initial instructions before session starts (agent._activity is None,
+    # so update_instructions() would just set _instructions synchronously anyway)
+    agent._instructions = _build_verbosity_instructions(base_instructions, verbosity)
 
     session = _build_session(selected_model, tts_enabled=tts_available)
 
@@ -407,10 +412,13 @@ async def orchestrator_session(ctx: agents.JobContext):
             logger.warning("Failed to disable audio output: %s", e)
 
         # Update agent instructions to reflect text-only mode
-        agent._raw_instructions = _build_verbosity_instructions(
-            ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity
-        )
+        # Schedule async update_instructions since this callback is synchronous
+        async def _update_tts_instructions():
+            new_instr = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity)
+            await agent.update_instructions(new_instr)
+            logger.debug("Instructions updated for text-only mode")
 
+        asyncio.create_task(_update_tts_instructions())
         asyncio.create_task(_notify_tts_disabled(reason))
 
     @session.on("error")
@@ -425,6 +433,7 @@ async def orchestrator_session(ctx: agents.JobContext):
         # Check if it's a LiveKit TTSError wrapper
         try:
             from livekit.agents import tts as tts_module
+
             if isinstance(error, tts_module.TTSError):
                 is_tts_error = True
                 err = error.error
@@ -479,8 +488,7 @@ async def orchestrator_session(ctx: agents.JobContext):
     ctx.room.on("data_received", _on_data_received)
 
     greeting_instructions = (
-        "Greet the user. Introduce yourself as the Agent On Call "
-        "orchestrator. Ask how you can help today."
+        "Greet the user. Introduce yourself as the Agent On Call " "orchestrator. Ask how you can help today."
     )
     try:
         await session.generate_reply(instructions=greeting_instructions)
@@ -489,12 +497,7 @@ async def orchestrator_session(ctx: agents.JobContext):
         logger.error("generate_reply failed: %s", e)
 
         # If TTS-related, disable TTS and retry without voice
-        if (
-            "cartesia" in error_str
-            or "tts" in error_str
-            or "402" in error_str
-            or "handshake" in error_str
-        ):
+        if "cartesia" in error_str or "tts" in error_str or "402" in error_str or "handshake" in error_str:
             logger.warning("TTS failure during greeting — rebuilding session without TTS")
             _disable_tts_runtime("no_credits")
 
