@@ -20,7 +20,7 @@ import {
   groupTranscriptEntries,
   type TranscriptEntry,
 } from "@/lib/transcript-time";
-import { SettingsProvider } from "@/lib/settings-context";
+import { SettingsProvider, useSettings } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
 
 function MicMonitor() {
@@ -375,17 +375,20 @@ function AgentInterface() {
   );
 }
 
-export default function Home() {
+function HomeInner() {
   const [connectionDetails, setConnectionDetails] = useState<{
     token: string;
     url: string;
   } | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const { settings } = useSettings();
 
   const connect = useCallback(async () => {
     setConnecting(true);
     try {
-      const resp = await fetch("/api/token");
+      const model = (settings.model?.anthropicModel as string) || "";
+      const params = model ? `?model=${encodeURIComponent(model)}` : "";
+      const resp = await fetch(`/api/token${params}`);
       const data = await resp.json();
       setConnectionDetails({ token: data.token, url: data.url });
     } catch (err) {
@@ -393,7 +396,7 @@ export default function Home() {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [settings.model?.anthropicModel]);
 
   const disconnect = useCallback(() => {
     setConnectionDetails(null);
@@ -401,21 +404,19 @@ export default function Home() {
 
   if (connectionDetails) {
     return (
-      <SettingsProvider>
-        <div style={{ height: "100vh", background: "#0f172a" }}>
-          <LiveKitRoom
-            token={connectionDetails.token}
-            serverUrl={connectionDetails.url}
-            connect={true}
-            audio={true}
-            onDisconnected={disconnect}
-            style={{ height: "100%" }}
-          >
-            <AgentInterface />
-            <RoomAudioRenderer />
-          </LiveKitRoom>
-        </div>
-      </SettingsProvider>
+      <div style={{ height: "100vh", background: "#0f172a" }}>
+        <LiveKitRoom
+          token={connectionDetails.token}
+          serverUrl={connectionDetails.url}
+          connect={true}
+          audio={true}
+          onDisconnected={disconnect}
+          style={{ height: "100%" }}
+        >
+          <AgentInterface />
+          <RoomAudioRenderer />
+        </LiveKitRoom>
+      </div>
     );
   }
 
@@ -442,5 +443,13 @@ export default function Home() {
         {connecting ? "Connecting..." : "Start Call"}
       </button>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <SettingsProvider>
+      <HomeInner />
+    </SettingsProvider>
   );
 }

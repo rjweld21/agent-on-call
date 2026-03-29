@@ -1,5 +1,6 @@
 """Agent On Call entrypoint — registers agent sessions with LiveKit."""
 
+import json
 import os
 
 from dotenv import load_dotenv
@@ -14,9 +15,20 @@ load_dotenv(".env")
 
 server = AgentServer()
 
+VALID_ANTHROPIC_MODELS = {
+    "claude-haiku-4-5-20250514",
+    "claude-sonnet-4-5-20250514",
+    "claude-opus-4-20250514",
+}
 
-def _build_llm():
-    """Build the LLM plugin based on LLM_PROVIDER env var."""
+
+def _build_llm(model: str | None = None):
+    """Build the LLM plugin based on LLM_PROVIDER env var.
+
+    Args:
+        model: Optional model name from participant metadata. If provided and
+               valid, overrides the ANTHROPIC_MODEL env var.
+    """
     provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
     if provider == "openai":
         from livekit.plugins import openai
@@ -33,7 +45,13 @@ def _build_llm():
         raw_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         api_key = raw_api_key if raw_api_key not in PLACEHOLDER_VALUES else None
         auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+        # Use provided model if valid, otherwise fall back to env var
+        default_model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250514")
+        if model and model in VALID_ANTHROPIC_MODELS:
+            effective_model = model
+        else:
+            effective_model = default_model
 
         # Determine the effective key
         effective_key = api_key or auth_token
@@ -47,19 +65,37 @@ def _build_llm():
         # that sends it as Bearer auth instead of x-api-key
         if effective_key.startswith("sk-ant-oat"):
             client = anthropic_sdk.AsyncAnthropic(auth_token=effective_key)
-            return anthropic_plugin.LLM(model=model, api_key=effective_key, client=client)
+            return anthropic_plugin.LLM(
+                model=effective_model, api_key=effective_key, client=client
+            )
         else:
-            return anthropic_plugin.LLM(model=model, api_key=effective_key)
+            return anthropic_plugin.LLM(model=effective_model, api_key=effective_key)
+
+
+def _get_model_from_participants(ctx: agents.JobContext) -> str | None:
+    """Extract the model selection from the first non-agent participant's metadata."""
+    try:
+        for participant in ctx.room.remote_participants.values():
+            if participant.metadata:
+                meta = json.loads(participant.metadata)
+                if isinstance(meta, dict) and "model" in meta:
+                    return meta["model"]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return None
 
 
 @server.rtc_session(agent_name="orchestrator")
 async def orchestrator_session(ctx: agents.JobContext):
+    # Read model preference from participant metadata (set by frontend via token API)
+    selected_model = _get_model_from_participants(ctx)
+
     session = AgentSession(
         stt=deepgram.STT(
             model="nova-3",
             api_key=os.environ.get("DEEPGRAM_API_KEY"),
         ),
-        llm=_build_llm(),
+        llm=_build_llm(model=selected_model),
         tts=cartesia.TTS(
             api_key=os.environ.get("CARTESIA_API_KEY"),
         ),

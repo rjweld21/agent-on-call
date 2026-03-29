@@ -3,16 +3,42 @@ import {
   RoomAgentDispatch,
   RoomConfiguration,
 } from "livekit-server-sdk";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
+const VALID_MODELS = [
+  "claude-haiku-4-5-20250514",
+  "claude-sonnet-4-5-20250514",
+  "claude-opus-4-20250514",
+];
+
+const DEFAULT_MODEL = "claude-sonnet-4-5-20250514";
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const modelParam = searchParams.get("model");
+
+  // Validate model parameter
+  let model = DEFAULT_MODEL;
+  if (modelParam) {
+    if (!VALID_MODELS.includes(modelParam)) {
+      return NextResponse.json(
+        { error: `Invalid model: ${modelParam}. Valid models: ${VALID_MODELS.join(", ")}` },
+        { status: 400 }
+      );
+    }
+    model = modelParam;
+  }
+
   const roomName = `room-${Date.now()}`;
   const participantName = `user-${Math.random().toString(36).slice(2, 8)}`;
 
   const at = new AccessToken(
     process.env.LIVEKIT_API_KEY,
     process.env.LIVEKIT_API_SECRET,
-    { identity: participantName }
+    {
+      identity: participantName,
+      metadata: JSON.stringify({ model }),
+    }
   );
 
   at.addGrant({
