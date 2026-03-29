@@ -233,6 +233,35 @@ function AgentInterface() {
             });
           }
         }
+        // Handle command_output messages for full terminal output streaming
+        if (msg?.type === "command_output") {
+          setTerminalEntries((prev) => {
+            const existingIdx = prev.findIndex((e) => e.id === msg.id);
+            if (existingIdx >= 0) {
+              const updated = [...prev];
+              updated[existingIdx] = {
+                ...updated[existingIdx],
+                output: msg.output || "",
+                exitCode: msg.exitCode ?? 0,
+                status: msg.done
+                  ? (msg.exitCode === 0 ? "completed" : "failed")
+                  : "running",
+              };
+              return updated;
+            }
+            // No matching entry yet — create one
+            return [...prev, {
+              id: msg.id,
+              timestamp: new Date(),
+              command: msg.command || "command",
+              output: msg.output || "",
+              exitCode: msg.exitCode ?? 0,
+              status: msg.done
+                ? (msg.exitCode === 0 ? "completed" as const : "failed" as const)
+                : "running" as const,
+            }];
+          });
+        }
       } catch {
         // Ignore non-JSON or unrelated messages
       }

@@ -71,13 +71,106 @@ class TestEmitAction:
             ctx = MagicMock()
             await agent.exec_command(ctx, command="echo hello")
 
-            # Should have emitted at least 2 actions: started and completed
+            # Should have emitted at least 3 messages: started action, command_output, completed action
             calls = mock_room.local_participant.publish_data.call_args_list
-            assert len(calls) >= 2
+            assert len(calls) >= 3
             first_payload = json.loads(calls[0][0][0].decode())
             assert first_payload["action"]["status"] == "started"
+            # Second call should be command_output
+            cmd_output = json.loads(calls[1][0][0].decode())
+            assert cmd_output["type"] == "command_output"
+            assert cmd_output["done"] is True
+            assert cmd_output["output"] == "hello"
             last_payload = json.loads(calls[-1][0][0].decode())
             assert last_payload["action"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_emit_command_output_publishes_to_data_channel(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            await agent._emit_command_output(
+                command_id="test-cmd-1",
+                command="ls -la",
+                output="total 42\nfile.txt",
+                exit_code=0,
+                done=True,
+            )
+
+            mock_room.local_participant.publish_data.assert_called_once()
+            payload = json.loads(
+                mock_room.local_participant.publish_data.call_args[0][0].decode()
+            )
+            assert payload["type"] == "command_output"
+            assert payload["id"] == "test-cmd-1"
+            assert payload["command"] == "ls -la"
+            assert payload["output"] == "total 42\nfile.txt"
+            assert payload["exitCode"] == 0
+            assert payload["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_emit_command_output_truncates_large_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            large_output = "x" * (200 * 1024)  # 200KB
+            await agent._emit_command_output(
+                command_id="test-cmd-2",
+                command="cat bigfile",
+                output=large_output,
+                exit_code=0,
+                done=True,
+            )
+
+            payload = json.loads(
+                mock_room.local_participant.publish_data.call_args[0][0].decode()
+            )
+            assert "truncated" in payload["output"]
+            assert len(payload["output"]) < 200 * 1024
+
+    @pytest.mark.asyncio
+    async def test_emit_action_returns_action_id(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            action_id = await agent._emit_action("executing", "exec_command", "test")
+            assert action_id is not None
+            assert "exec_command" in action_id
+
+    @pytest.mark.asyncio
+    async def test_emit_action_uses_provided_action_id(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            action_id = await agent._emit_action(
+                "result", "exec_command", "done",
+                action_id="custom-id-123"
+            )
+            assert action_id == "custom-id-123"
+            payload = json.loads(
+                mock_room.local_participant.publish_data.call_args[0][0].decode()
+            )
+            assert payload["action"]["id"] == "custom-id-123"
 
 
 class TestOrchestratorAgent:

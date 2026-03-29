@@ -64,7 +64,8 @@ class OrchestratorAgent(Agent):
         summary: str,
         detail: str = "",
         status: str = "started",
-    ) -> None:
+        action_id: str | None = None,
+    ) -> str:
         """Publish an agent action event to the frontend via data channel.
 
         Args:
@@ -73,11 +74,16 @@ class OrchestratorAgent(Agent):
             summary: Human-readable one-liner for the activity panel
             detail: Full command or output (shown when expanded)
             status: Lifecycle state — "started", "completed", or "failed"
-        """
-        if self._room is None:
-            return
+            action_id: Optional action ID (auto-generated if None)
 
-        action_id = f"action-{int(time.time() * 1000)}-{tool}"
+        Returns:
+            The action ID used for this event.
+        """
+        if action_id is None:
+            action_id = f"action-{int(time.time() * 1000)}-{tool}"
+
+        if self._room is None:
+            return action_id
         message = json.dumps(
             {
                 "type": "agent_action",
@@ -99,6 +105,54 @@ class OrchestratorAgent(Agent):
             )
         except Exception as e:
             logger.warning("Failed to emit action event: %s", e)
+        return action_id
+
+    async def _emit_command_output(
+        self,
+        command_id: str,
+        command: str,
+        output: str,
+        exit_code: int,
+        done: bool = True,
+    ) -> None:
+        """Publish command output to the frontend via data channel.
+
+        This sends the full command output (not truncated) so the terminal
+        panel can display it. Chunks are capped at 100KB to prevent
+        excessive data channel usage.
+
+        Args:
+            command_id: Unique ID matching the action event
+            command: The command that was executed
+            output: The output text (stdout + stderr)
+            exit_code: The command exit code
+            done: Whether the command has finished
+        """
+        if self._room is None:
+            return
+
+        # Cap output at 100KB
+        max_output = 100 * 1024
+        if len(output) > max_output:
+            output = output[:max_output] + "\n...(output truncated at 100KB)..."
+
+        message = json.dumps(
+            {
+                "type": "command_output",
+                "id": command_id,
+                "command": command,
+                "output": output,
+                "exitCode": exit_code,
+                "done": done,
+            }
+        )
+        try:
+            await self._room.local_participant.publish_data(
+                message.encode(),
+                topic="command_output",
+            )
+        except Exception as e:
+            logger.warning("Failed to emit command output: %s", e)
 
     @function_tool
     async def create_workspace(self, context: RunContext, name: str) -> str:
@@ -128,7 +182,7 @@ class OrchestratorAgent(Agent):
                 f"({len(command)} chars, max 10000). "
                 "Consider writing to a script file and executing it."
             )
-        await self._emit_action(
+        cmd_action_id = await self._emit_action(
             "executing",
             "exec_command",
             f"Running: {command[:80]}{'...' if len(command) > 80 else ''}",
@@ -136,7 +190,24 @@ class OrchestratorAgent(Agent):
         )
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(command, timeout=timeout)
-            # Truncate very long output
+
+            # Publish full output to terminal panel via command_output channel
+            full_output = ""
+            if stdout:
+                full_output += stdout
+            if stderr:
+                if full_output:
+                    full_output += "\n"
+                full_output += stderr
+            await self._emit_command_output(
+                command_id=cmd_action_id,
+                command=command,
+                output=full_output,
+                exit_code=exit_code,
+                done=True,
+            )
+
+            # Truncate for LLM context (the full output was already sent to terminal)
             if len(stdout) > 2000:
                 stdout = stdout[:1000] + "\n...(truncated)...\n" + stdout[-500:]
             if len(stderr) > 1000:
@@ -149,13 +220,38 @@ class OrchestratorAgent(Agent):
                 f"Command {'completed' if exit_code == 0 else 'failed'} (exit {exit_code})",
                 detail=stdout[:200] if stdout else stderr[:200],
                 status=status,
+                action_id=cmd_action_id,
             )
             return result
         except TimeoutError:
-            await self._emit_action("result", "exec_command", f"Command timed out after {timeout}s", status="failed")
+            await self._emit_command_output(
+                command_id=cmd_action_id,
+                command=command,
+                output=f"Command timed out after {timeout}s",
+                exit_code=-1,
+                done=True,
+            )
+            await self._emit_action(
+                "result", "exec_command",
+                f"Command timed out after {timeout}s",
+                status="failed",
+                action_id=cmd_action_id,
+            )
             return f"Error: Command timed out after {timeout}s: {command[:100]}"
         except RuntimeError as e:
-            await self._emit_action("result", "exec_command", f"Error: {e}", status="failed")
+            await self._emit_command_output(
+                command_id=cmd_action_id,
+                command=command,
+                output=str(e),
+                exit_code=-1,
+                done=True,
+            )
+            await self._emit_action(
+                "result", "exec_command",
+                f"Error: {e}",
+                status="failed",
+                action_id=cmd_action_id,
+            )
             return f"Error: {e}"
 
     @function_tool
@@ -226,7 +322,7 @@ class OrchestratorAgent(Agent):
         if not repo_url or not repo_url.strip():
             return "Error: Repository URL cannot be empty."
 
-        await self._emit_action("executing", "git_clone", f"Cloning: {repo_url}")
+        clone_action_id = await self._emit_action("executing", "git_clone", f"Cloning: {repo_url}")
         token = self._get_git_token()
         credentialed_url = inject_git_credentials(repo_url, token)
 
@@ -238,12 +334,23 @@ class OrchestratorAgent(Agent):
             cmd_parts.append(path)
 
         cmd = " ".join(cmd_parts)
+        # Display URL (sanitized) for terminal panel
+        display_cmd = sanitize_git_output(cmd, token)
 
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(cmd, timeout=120)
             # Sanitize output to remove credentials
             stdout = sanitize_git_output(stdout, token)
             stderr = sanitize_git_output(stderr, token)
+
+            output = stdout or stderr or ""
+            await self._emit_command_output(
+                command_id=clone_action_id,
+                command=display_cmd,
+                output=output,
+                exit_code=exit_code,
+                done=True,
+            )
 
             if exit_code != 0:
                 error_msg = stderr or stdout
@@ -252,13 +359,21 @@ class OrchestratorAgent(Agent):
                 return f"Clone failed (exit {exit_code}):\n{error_msg}"
 
             result = stdout or stderr or "Clone completed successfully."
-            await self._emit_action("result", "git_clone", "Clone completed", status="completed")
+            await self._emit_action("result", "git_clone", "Clone completed", status="completed", action_id=clone_action_id)
             return sanitize_git_output(result, token)
         except TimeoutError:
-            await self._emit_action("result", "git_clone", "Clone timed out", status="failed")
+            await self._emit_command_output(
+                command_id=clone_action_id, command=display_cmd,
+                output="Clone timed out after 120s", exit_code=-1, done=True,
+            )
+            await self._emit_action("result", "git_clone", "Clone timed out", status="failed", action_id=clone_action_id)
             return "Error: Clone timed out after 120s. The repository may be very large."
         except RuntimeError as e:
-            await self._emit_action("result", "git_clone", f"Error: {e}", status="failed")
+            await self._emit_command_output(
+                command_id=clone_action_id, command=display_cmd,
+                output=str(e), exit_code=-1, done=True,
+            )
+            await self._emit_action("result", "git_clone", f"Error: {e}", status="failed", action_id=clone_action_id)
             return f"Error: {e}"
 
     @function_tool
