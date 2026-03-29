@@ -17,15 +17,14 @@ export const DEFAULT_SETTINGS: SettingsState = {
   voice: {},
 };
 
-type SettingsAction = {
-  type: "UPDATE";
-  category: string;
-  key: string;
-  value: unknown;
-};
+type SettingsAction =
+  | { type: "HYDRATE"; state: SettingsState }
+  | { type: "UPDATE"; category: string; key: string; value: unknown };
 
 function settingsReducer(state: SettingsState, action: SettingsAction): SettingsState {
   switch (action.type) {
+    case "HYDRATE":
+      return action.state;
     case "UPDATE": {
       const updated = {
         ...state,
@@ -69,7 +68,15 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, dispatch] = useReducer(settingsReducer, DEFAULT_SETTINGS, loadSettings);
+  const [settings, dispatch] = useReducer(settingsReducer, DEFAULT_SETTINGS);
+
+  // Hydrate from localStorage after mount to avoid server/client mismatch
+  useEffect(() => {
+    const stored = loadSettings();
+    if (JSON.stringify(stored) !== JSON.stringify(DEFAULT_SETTINGS)) {
+      dispatch({ type: "HYDRATE", state: stored });
+    }
+  }, []);
 
   const updateSetting = useCallback(
     (category: string, key: string, value: unknown) => {

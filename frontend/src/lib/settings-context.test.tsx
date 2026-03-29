@@ -33,7 +33,7 @@ describe("SettingsProvider", () => {
     expect(JSON.parse(settingsText!)).toEqual(DEFAULT_SETTINGS);
   });
 
-  it("loads settings from localStorage on mount", () => {
+  it("loads settings from localStorage after mount", async () => {
     const stored = {
       ...DEFAULT_SETTINGS,
       general: { ...DEFAULT_SETTINGS.general, theme: "light" },
@@ -45,6 +45,9 @@ describe("SettingsProvider", () => {
         <TestConsumer />
       </SettingsProvider>,
     );
+
+    // After useEffect hydration, picks up localStorage values
+    await act(async () => {});
     const settingsText = screen.getByTestId("settings").textContent;
     expect(JSON.parse(settingsText!).general.theme).toBe("light");
   });
