@@ -16,8 +16,8 @@ class Config:
     livekit_api_key: str
     livekit_api_secret: str
     deepgram_api_key: str
-    cartesia_api_key: str
     llm_provider: str  # "anthropic" or "openai"
+    cartesia_api_key: str | None = None
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     git_token: str | None = None
@@ -35,7 +35,7 @@ def load_config() -> Config:
     livekit_api_key = _require("LIVEKIT_API_KEY")
     livekit_api_secret = _require("LIVEKIT_API_SECRET")
     deepgram_api_key = _require("DEEPGRAM_API_KEY")
-    cartesia_api_key = _require("CARTESIA_API_KEY")
+    cartesia_api_key = os.environ.get("CARTESIA_API_KEY")
 
     llm_provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
 
