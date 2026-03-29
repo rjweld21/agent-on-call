@@ -24,6 +24,7 @@ import {
 import { SettingsProvider, useSettings, useSettingsSync } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
 import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
+import { TerminalPanel, type TerminalEntry } from "@/app/components/TerminalPanel";
 import { MuteButton } from "@/app/components/MuteButton";
 
 function MicMonitor() {
@@ -134,6 +135,7 @@ function AgentInterface() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [ttsBanner, setTtsBanner] = useState<{ reason: string } | null>(null);
   const [systemMessages, setSystemMessages] = useState<TranscriptEntry[]>([]);
+  const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
 
   // Sync settings changes to agent via data channel
   useSettingsSync(room);
@@ -176,6 +178,60 @@ function AgentInterface() {
             }
             return [...prev, newItem];
           });
+
+          // Build terminal entries from command tool actions
+          const commandTools = new Set([
+            "exec_command", "git_clone", "git_commit", "git_push", "git_status",
+          ]);
+          if (commandTools.has(action.tool)) {
+            setTerminalEntries((prev) => {
+              const existingIdx = prev.findIndex((e) => e.id === action.id);
+              if (action.status === "started" || (action.kind === "executing" && existingIdx < 0)) {
+                // Extract command from summary (e.g. "Running: ls -la")
+                const cmdMatch = (action.summary || "").match(/^(?:Running|Cloning|Committing|Pushing|Checking):\s*(.+)/);
+                const command = cmdMatch ? cmdMatch[1] : action.detail || action.summary || action.tool;
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = { ...updated[existingIdx], status: "running" };
+                  return updated;
+                }
+                return [...prev, {
+                  id: action.id,
+                  timestamp: new Date(action.timestamp || Date.now()),
+                  command,
+                  output: "",
+                  exitCode: 0,
+                  status: "running" as const,
+                }];
+              }
+              if (action.status === "completed" || action.status === "failed") {
+                // Parse exit code from detail or summary
+                const exitMatch = (action.detail || action.summary || "").match(/exit (?:code:?\s*)?(\d+)/i);
+                const exitCode = exitMatch ? parseInt(exitMatch[1], 10) : (action.status === "failed" ? 1 : 0);
+                const output = action.detail || action.summary || "";
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = {
+                    ...updated[existingIdx],
+                    output,
+                    exitCode,
+                    status: action.status === "failed" ? "failed" : "completed",
+                  };
+                  return updated;
+                }
+                // No matching started entry — create completed entry directly
+                return [...prev, {
+                  id: action.id,
+                  timestamp: new Date(action.timestamp || Date.now()),
+                  command: action.tool,
+                  output,
+                  exitCode,
+                  status: action.status === "failed" ? "failed" as const : "completed" as const,
+                }];
+              }
+              return prev;
+            });
+          }
         }
       } catch {
         // Ignore non-JSON or unrelated messages
@@ -419,6 +475,9 @@ function AgentInterface() {
         activities={activities}
         isAgentWorking={state === "thinking"}
       />
+
+      {/* Terminal Output Panel */}
+      <TerminalPanel entries={terminalEntries} />
 
       {/* Participants */}
       <div style={{ width: "100%", maxWidth: "500px" }}>
