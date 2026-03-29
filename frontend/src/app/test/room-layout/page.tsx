@@ -254,7 +254,7 @@ export default function RoomLayoutTestPage() {
               <ThinkingPanel activities={MOCK_ACTIVITIES} isAgentWorking={false} />
             </div>
             <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderTop: "1px solid #334155" }}>
-              <TerminalPanel entries={MOCK_TERMINAL} />
+              <TerminalPanel entries={MOCK_TERMINAL} onClear={() => {}} />
             </div>
           </div>
 

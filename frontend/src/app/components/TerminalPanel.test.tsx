@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { TerminalPanel, type TerminalEntry } from "./TerminalPanel";
 
@@ -10,6 +10,7 @@ const mockEntries: TerminalEntry[] = [
     output: "total 42\ndrwxr-xr-x  5 user group  160 Mar 25 10:00 .\n",
     exitCode: 0,
     status: "completed",
+    tool: "exec_command",
   },
   {
     id: "2",
@@ -18,6 +19,7 @@ const mockEntries: TerminalEntry[] = [
     output: "On branch main\nnothing to commit, working tree clean",
     exitCode: 0,
     status: "completed",
+    tool: "git_status",
   },
   {
     id: "3",
@@ -26,6 +28,7 @@ const mockEntries: TerminalEntry[] = [
     output: "Error: test failed",
     exitCode: 1,
     status: "failed",
+    tool: "exec_command",
   },
 ];
 
@@ -60,6 +63,12 @@ describe("TerminalPanel", () => {
     expect(commands[0]).toHaveTextContent("ls -la");
     expect(commands[1]).toHaveTextContent("git status");
     expect(commands[2]).toHaveTextContent("npm test");
+  });
+
+  it("shows command text in bold (fontWeight 700)", () => {
+    render(<TerminalPanel entries={mockEntries} />);
+    const commands = screen.getAllByTestId("terminal-command");
+    expect(commands[0].style.fontWeight).toBe("700");
   });
 
   it("shows command output", () => {
@@ -140,5 +149,138 @@ describe("TerminalPanel", () => {
     render(<TerminalPanel entries={[]} />);
     const panel = screen.getByTestId("terminal-panel");
     expect(panel.style.background).toBe("rgb(13, 17, 23)"); // #0d1117
+  });
+
+  // === New tests for #66 enhancements ===
+
+  describe("copy button", () => {
+    beforeEach(() => {
+      Object.assign(navigator, {
+        clipboard: {
+          writeText: vi.fn().mockResolvedValue(undefined),
+        },
+      });
+    });
+
+    it("renders a copy button for each entry", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      const copyButtons = screen.getAllByTestId("terminal-copy-button");
+      expect(copyButtons).toHaveLength(3);
+    });
+
+    it("copies command to clipboard on click", async () => {
+      render(<TerminalPanel entries={[mockEntries[0]]} />);
+      const copyBtn = screen.getByTestId("terminal-copy-button");
+      fireEvent.click(copyBtn);
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("ls -la");
+    });
+  });
+
+  describe("timestamp", () => {
+    it("shows HH:MM:SS timestamp for each entry", () => {
+      render(<TerminalPanel entries={[mockEntries[0]]} />);
+      const timestamp = screen.getByTestId("terminal-timestamp");
+      // 10:00:00 in local time
+      expect(timestamp).toBeInTheDocument();
+      expect(timestamp.textContent).toMatch(/\d{2}:\d{2}:\d{2}/);
+    });
+  });
+
+  describe("collapsible output", () => {
+    it("collapses output with > 5 lines by default", () => {
+      const longOutput = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+      const entry: TerminalEntry = {
+        id: "long1",
+        timestamp: new Date("2026-03-25T10:00:00"),
+        command: "cat file.txt",
+        output: longOutput,
+        exitCode: 0,
+        status: "completed",
+      };
+      render(<TerminalPanel entries={[entry]} />);
+      const expandBtn = screen.getByTestId("terminal-expand-button");
+      expect(expandBtn).toBeInTheDocument();
+      expect(expandBtn).toHaveTextContent(/5 more lines/);
+    });
+
+    it("expands output on click", () => {
+      const longOutput = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n");
+      const entry: TerminalEntry = {
+        id: "long2",
+        timestamp: new Date("2026-03-25T10:00:00"),
+        command: "cat file.txt",
+        output: longOutput,
+        exitCode: 0,
+        status: "completed",
+      };
+      render(<TerminalPanel entries={[entry]} />);
+      fireEvent.click(screen.getByTestId("terminal-expand-button"));
+      // After expanding, should show collapse button
+      expect(screen.getByTestId("terminal-collapse-button")).toBeInTheDocument();
+      // Full output should now be visible
+      const output = screen.getByTestId("terminal-output");
+      expect(output.textContent).toContain("line 10");
+    });
+
+    it("does not show expand button for short output (<= 5 lines)", () => {
+      render(<TerminalPanel entries={[mockEntries[0]]} />);
+      expect(screen.queryByTestId("terminal-expand-button")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("filter bar", () => {
+    it("renders filter bar with All, Commands, Errors buttons", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      expect(screen.getByTestId("terminal-filter-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-filter-all")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-filter-commands")).toBeInTheDocument();
+      expect(screen.getByTestId("terminal-filter-errors")).toBeInTheDocument();
+    });
+
+    it("filters to errors only when errors button clicked", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      fireEvent.click(screen.getByTestId("terminal-filter-errors"));
+      const items = screen.getAllByTestId("terminal-entry");
+      expect(items).toHaveLength(1);
+      const commands = screen.getAllByTestId("terminal-command");
+      expect(commands[0]).toHaveTextContent("npm test");
+    });
+
+    it("shows all entries when All is clicked after filtering", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      fireEvent.click(screen.getByTestId("terminal-filter-errors"));
+      expect(screen.getAllByTestId("terminal-entry")).toHaveLength(1);
+      fireEvent.click(screen.getByTestId("terminal-filter-all"));
+      expect(screen.getAllByTestId("terminal-entry")).toHaveLength(3);
+    });
+
+    it("shows error count in errors filter button", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      const errorsBtn = screen.getByTestId("terminal-filter-errors");
+      expect(errorsBtn).toHaveTextContent("Errors (1)");
+    });
+  });
+
+  describe("clear button", () => {
+    it("renders a clear button", () => {
+      render(<TerminalPanel entries={mockEntries} />);
+      expect(screen.getByTestId("terminal-clear-button")).toBeInTheDocument();
+    });
+
+    it("calls onClear callback when clear is clicked", () => {
+      const onClear = vi.fn();
+      render(<TerminalPanel entries={mockEntries} onClear={onClear} />);
+      fireEvent.click(screen.getByTestId("terminal-clear-button"));
+      expect(onClear).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("no matching entries message", () => {
+    it("shows 'No matching entries' when filter results in empty list", () => {
+      const successOnly: TerminalEntry[] = [mockEntries[0]]; // only success
+      render(<TerminalPanel entries={successOnly} />);
+      fireEvent.click(screen.getByTestId("terminal-filter-errors"));
+      expect(screen.getByTestId("terminal-empty")).toHaveTextContent("No matching entries");
+    });
   });
 });

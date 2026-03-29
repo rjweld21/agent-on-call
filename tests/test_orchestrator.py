@@ -112,6 +112,62 @@ class TestEmitAction:
             assert payload["output"] == "total 42\nfile.txt"
             assert payload["exitCode"] == 0
             assert payload["done"] is True
+            assert "timestamp" in payload
+            assert payload["tool"] == ""  # default when not specified
+
+    @pytest.mark.asyncio
+    async def test_emit_command_output_includes_timestamp_and_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            await agent._emit_command_output(
+                command_id="test-cmd-tool",
+                command="git status",
+                output="On branch main",
+                exit_code=0,
+                done=True,
+                tool="git_status",
+            )
+
+            payload = json.loads(
+                mock_room.local_participant.publish_data.call_args[0][0].decode()
+            )
+            assert payload["tool"] == "git_status"
+            assert "timestamp" in payload
+            # Timestamp should be ISO format
+            assert "T" in payload["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_exec_command_passes_tool_to_command_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "hello", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.exec_command(ctx, command="echo hello")
+
+            # Find the command_output message
+            for call in mock_room.local_participant.publish_data.call_args_list:
+                payload = json.loads(call[0][0].decode())
+                if payload.get("type") == "command_output":
+                    assert payload["tool"] == "exec_command"
+                    assert "timestamp" in payload
+                    break
+            else:
+                raise AssertionError  # pragma: no cover("No command_output message found")
 
     @pytest.mark.asyncio
     async def test_emit_command_output_truncates_large_output(self):

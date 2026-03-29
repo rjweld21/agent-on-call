@@ -244,19 +244,21 @@ function AgentInterface() {
                 status: msg.done
                   ? (msg.exitCode === 0 ? "completed" : "failed")
                   : "running",
+                tool: msg.tool || updated[existingIdx].tool,
               };
               return updated;
             }
             // No matching entry yet — create one
             return [...prev, {
               id: msg.id,
-              timestamp: new Date(),
+              timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
               command: msg.command || "command",
               output: msg.output || "",
               exitCode: msg.exitCode ?? 0,
               status: msg.done
                 ? (msg.exitCode === 0 ? "completed" as const : "failed" as const)
                 : "running" as const,
+              tool: msg.tool || "",
             }];
           });
         }
@@ -693,7 +695,7 @@ function AgentInterface() {
 
         {/* Terminal Output Panel — bottom half */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderTop: "1px solid #334155" }}>
-          <TerminalPanel entries={terminalEntries} />
+          <TerminalPanel entries={terminalEntries} onClear={() => setTerminalEntries([])} />
         </div>
       </div>
 
