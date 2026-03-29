@@ -634,3 +634,31 @@ class TestWebSearchTool:
             result = await agent.web_fetch(ctx, url="https://example.com")
             agent._web.fetch.assert_awaited_once_with("https://example.com")
             assert "Page content" in result
+
+
+class TestAnalyzeCodebaseTool:
+    def test_orchestrator_has_analyze_codebase_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            assert hasattr(agent, "analyze_codebase")
+
+    def test_orchestrator_has_code_analysis_instance(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            assert hasattr(agent, "_code")
+
+    @pytest.mark.asyncio
+    async def test_analyze_codebase_delegates_to_code_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._code.analyze = AsyncMock(return_value="**Project Type:** Python\n**Structure:**\nsrc/main.py")
+            ctx = MagicMock()
+            result = await agent.analyze_codebase(ctx, path="/workspace", query="def main")
+            agent._code.analyze.assert_awaited_once_with(path="/workspace", query="def main", depth=3)
+            assert "Python" in result
