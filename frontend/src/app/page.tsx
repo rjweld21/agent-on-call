@@ -387,8 +387,12 @@ function HomeInner() {
     setConnecting(true);
     try {
       const model = (settings.model?.anthropicModel as string) || "";
-      const params = model ? `?model=${encodeURIComponent(model)}` : "";
-      const resp = await fetch(`/api/token${params}`);
+      const verbosity = (settings.voice?.verbosity as number) || 3;
+      const params = new URLSearchParams();
+      if (model) params.set("model", model);
+      if (verbosity !== 3) params.set("verbosity", String(verbosity));
+      const qs = params.toString();
+      const resp = await fetch(`/api/token${qs ? `?${qs}` : ""}`);
       const data = await resp.json();
       setConnectionDetails({ token: data.token, url: data.url });
     } catch (err) {
@@ -396,7 +400,7 @@ function HomeInner() {
     } finally {
       setConnecting(false);
     }
-  }, [settings.model?.anthropicModel]);
+  }, [settings.model?.anthropicModel, settings.voice?.verbosity]);
 
   const disconnect = useCallback(() => {
     setConnectionDetails(null);

@@ -2,6 +2,7 @@
 
 import { useEffect, useCallback } from "react";
 import { ModelSelector } from "./ModelSelector";
+import { VerbositySlider } from "./VerbositySlider";
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -11,7 +12,7 @@ interface SettingsPanelProps {
 const SECTIONS = [
   { id: "general", title: "General", description: "General preferences" },
   { id: "model", title: "Model", description: "AI model configuration", component: ModelSelector },
-  { id: "voice", title: "Voice", description: "Voice and turn-taking controls" },
+  { id: "voice", title: "Voice", description: "Voice and turn-taking controls", component: VerbositySlider },
 ];
 
 export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {

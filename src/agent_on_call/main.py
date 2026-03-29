@@ -72,23 +72,43 @@ def _build_llm(model: str | None = None):
             return anthropic_plugin.LLM(model=effective_model, api_key=effective_key)
 
 
-def _get_model_from_participants(ctx: agents.JobContext) -> str | None:
-    """Extract the model selection from the first non-agent participant's metadata."""
+VERBOSITY_PROMPTS = {
+    1: "Be extremely concise. Give bare minimum answers. Short, declarative sentences. Skip pleasantries, context, and elaboration.",
+    2: "Be brief but complete. Answer with just enough context. No filler or examples unless asked. One or two sentences when possible.",
+    3: "Use a natural conversational tone. Provide context when helpful. Explain reasoning briefly.",
+    4: "Give thorough explanations. Walk through reasoning step by step. Offer examples and alternatives.",
+    5: "Explain everything in full detail. Cover background, context, trade-offs, edge cases, and implications.",
+}
+
+
+def _get_participant_metadata(ctx: agents.JobContext) -> dict:
+    """Extract metadata from the first non-agent participant."""
     try:
         for participant in ctx.room.remote_participants.values():
             if participant.metadata:
                 meta = json.loads(participant.metadata)
-                if isinstance(meta, dict) and "model" in meta:
-                    return meta["model"]
+                if isinstance(meta, dict):
+                    return meta
     except (json.JSONDecodeError, AttributeError):
         pass
-    return None
+    return {}
 
 
 @server.rtc_session(agent_name="orchestrator")
 async def orchestrator_session(ctx: agents.JobContext):
-    # Read model preference from participant metadata (set by frontend via token API)
-    selected_model = _get_model_from_participants(ctx)
+    # Read preferences from participant metadata (set by frontend via token API)
+    metadata = _get_participant_metadata(ctx)
+    selected_model = metadata.get("model")
+    verbosity = metadata.get("verbosity", 3)
+    if not isinstance(verbosity, int) or verbosity < 1 or verbosity > 5:
+        verbosity = 3
+
+    # Build agent with verbosity-adjusted instructions
+    agent = OrchestratorAgent()
+    verbosity_directive = VERBOSITY_PROMPTS.get(verbosity, VERBOSITY_PROMPTS[3])
+    agent._raw_instructions = (
+        agent.instructions + f"\n\nVerbosity directive: {verbosity_directive}"
+    )
 
     session = AgentSession(
         stt=deepgram.STT(
@@ -104,7 +124,7 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     await session.start(
         room=ctx.room,
-        agent=OrchestratorAgent(),
+        agent=agent,
     )
 
     # Set orchestrator display name (must be after session.start connects to room)
