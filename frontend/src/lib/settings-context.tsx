@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useReducer, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useEffect, useCallback, useRef, type ReactNode } from "react";
+import type { Room } from "livekit-client";
 
 const STORAGE_KEY = "aoc-settings";
 
@@ -98,4 +99,57 @@ export function useSettings(): SettingsContextValue {
     throw new Error("useSettings must be used within a SettingsProvider");
   }
   return context;
+}
+
+/**
+ * Syncs settings changes to the LiveKit agent via data channel.
+ *
+ * Watches model and verbosity settings; when they change, publishes a
+ * settings_update message to the room data channel after a 300ms debounce.
+ * Skips the initial render to avoid sending on mount.
+ */
+export function useSettingsSync(room: Room | null | undefined) {
+  const { settings } = useSettings();
+  const model = settings.model?.anthropicModel as string | undefined;
+  const verbosity = settings.voice?.verbosity as number | undefined;
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialRef = useRef(true);
+
+  useEffect(() => {
+    // Skip initial render — don't send on mount
+    if (initialRef.current) {
+      initialRef.current = false;
+      return;
+    }
+
+    if (!room) return;
+
+    // Debounce: clear previous timeout
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = setTimeout(() => {
+      const payload = JSON.stringify({
+        type: "settings_update",
+        ...(model !== undefined && { model }),
+        ...(verbosity !== undefined && { verbosity }),
+      });
+
+      try {
+        room.localParticipant.publishData(
+          new TextEncoder().encode(payload),
+          { topic: "settings" },
+        );
+      } catch (err) {
+        console.error("Failed to send settings update via data channel:", err);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [room, model, verbosity]);
 }

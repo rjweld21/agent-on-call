@@ -10,6 +10,7 @@ import {
   useLocalParticipant,
   useTrackTranscription,
   useChat,
+  useRoomContext,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
@@ -20,7 +21,7 @@ import {
   groupTranscriptEntries,
   type TranscriptEntry,
 } from "@/lib/transcript-time";
-import { SettingsProvider, useSettings } from "@/lib/settings-context";
+import { SettingsProvider, useSettings, useSettingsSync } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
 import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
 
@@ -125,10 +126,14 @@ function AgentInterface() {
   const { agentTranscriptions } = useVoiceAssistant();
   const participants = useParticipants();
   const { localParticipant, microphoneTrack } = useLocalParticipant();
+  const room = useRoomContext();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textInput, setTextInput] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+
+  // Sync settings changes to agent via data channel
+  useSettingsSync(room);
 
   // Track agent state transitions as activity items
   const prevStateRef = useRef(state);
