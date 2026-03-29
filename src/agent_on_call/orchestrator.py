@@ -386,16 +386,28 @@ class OrchestratorAgent(Agent):
     @function_tool
     async def git_status(self, context: RunContext) -> str:
         """Show the git working tree status in the workspace."""
-        await self._emit_action("tool_call", "git_status", "Checking git status")
+        status_action_id = await self._emit_action("tool_call", "git_status", "Checking git status")
         try:
             exit_code, stdout, stderr = self._workspace.exec_command("git status")
+            output = stdout or stderr or ""
+            await self._emit_command_output(
+                command_id=status_action_id,
+                command="git status",
+                output=output,
+                exit_code=exit_code,
+                done=True,
+            )
             if exit_code != 0:
-                await self._emit_action("result", "git_status", "git status failed", status="failed")
+                await self._emit_action("result", "git_status", "git status failed", status="failed", action_id=status_action_id)
                 return f"git status failed:\n{stderr or stdout}"
-            await self._emit_action("result", "git_status", "Status retrieved", status="completed")
+            await self._emit_action("result", "git_status", "Status retrieved", status="completed", action_id=status_action_id)
             return stdout
         except RuntimeError as e:
-            await self._emit_action("result", "git_status", f"Error: {e}", status="failed")
+            await self._emit_command_output(
+                command_id=status_action_id, command="git status",
+                output=str(e), exit_code=-1, done=True,
+            )
+            await self._emit_action("result", "git_status", f"Error: {e}", status="failed", action_id=status_action_id)
             return f"Error: {e}"
 
     @function_tool
@@ -409,30 +421,48 @@ class OrchestratorAgent(Agent):
         if not message or not message.strip():
             return "Error: Commit message cannot be empty."
 
-        await self._emit_action("executing", "git_commit", f"Committing: {message[:60]}")
+        commit_action_id = await self._emit_action("executing", "git_commit", f"Committing: {message[:60]}")
         try:
             # Stage files
             exit_code, stdout, stderr = self._workspace.exec_command(f"git add {files}")
             if exit_code != 0:
-                await self._emit_action("result", "git_commit", "git add failed", status="failed")
+                add_output = stderr or stdout or ""
+                await self._emit_command_output(
+                    command_id=commit_action_id, command=f"git add {files}",
+                    output=add_output, exit_code=exit_code, done=True,
+                )
+                await self._emit_action("result", "git_commit", "git add failed", status="failed", action_id=commit_action_id)
                 return f"git add failed:\n{stderr or stdout}"
 
             # Commit
             # Escape single quotes in message
             safe_message = message.replace("'", "'\\''")
-            exit_code, stdout, stderr = self._workspace.exec_command(f"git commit -m '{safe_message}'")
+            commit_cmd = f"git commit -m '{safe_message}'"
+            exit_code, stdout, stderr = self._workspace.exec_command(commit_cmd)
+            full_output = stdout or stderr or ""
+            await self._emit_command_output(
+                command_id=commit_action_id,
+                command=f"git add {files} && git commit -m '{message[:60]}'",
+                output=full_output,
+                exit_code=exit_code,
+                done=True,
+            )
             if exit_code != 0:
                 output = stdout or stderr
                 if "nothing to commit" in output.lower():
-                    await self._emit_action("result", "git_commit", "Nothing to commit", status="completed")
+                    await self._emit_action("result", "git_commit", "Nothing to commit", status="completed", action_id=commit_action_id)
                     return "Nothing to commit — working tree is clean."
-                await self._emit_action("result", "git_commit", "Commit failed", status="failed")
+                await self._emit_action("result", "git_commit", "Commit failed", status="failed", action_id=commit_action_id)
                 return f"git commit failed:\n{output}"
 
-            await self._emit_action("result", "git_commit", "Committed successfully", status="completed")
+            await self._emit_action("result", "git_commit", "Committed successfully", status="completed", action_id=commit_action_id)
             return f"Committed successfully:\n{stdout}"
         except RuntimeError as e:
-            await self._emit_action("result", "git_commit", f"Error: {e}", status="failed")
+            await self._emit_command_output(
+                command_id=commit_action_id, command=f"git commit -m '{message[:60]}'",
+                output=str(e), exit_code=-1, done=True,
+            )
+            await self._emit_action("result", "git_commit", f"Error: {e}", status="failed", action_id=commit_action_id)
             return f"Error: {e}"
 
     @function_tool
@@ -454,32 +484,48 @@ class OrchestratorAgent(Agent):
         if branch:
             cmd += f" {branch}"
 
-        await self._emit_action("executing", "git_push", f"Pushing to {remote}" + (f" {branch}" if branch else ""))
+        push_action_id = await self._emit_action("executing", "git_push", f"Pushing to {remote}" + (f" {branch}" if branch else ""))
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(cmd)
             stdout = sanitize_git_output(stdout, token)
             stderr = sanitize_git_output(stderr, token)
 
+            push_output = ""
+            if stdout:
+                push_output += stdout
+            if stderr:
+                if push_output:
+                    push_output += "\n"
+                push_output += stderr
+            await self._emit_command_output(
+                command_id=push_action_id, command=cmd,
+                output=push_output, exit_code=exit_code, done=True,
+            )
+
             if exit_code != 0:
                 error_msg = stderr or stdout
                 if "authentication failed" in error_msg.lower():
-                    await self._emit_action("result", "git_push", "Authentication failed", status="failed")
+                    await self._emit_action("result", "git_push", "Authentication failed", status="failed", action_id=push_action_id)
                     return "Error: Authentication failed. " "Check GIT_TOKEN environment variable."
                 if "rejected" in error_msg.lower():
-                    await self._emit_action("result", "git_push", "Push rejected", status="failed")
+                    await self._emit_action("result", "git_push", "Push rejected", status="failed", action_id=push_action_id)
                     return (
                         f"Push rejected:\n{error_msg}\n\n"
                         "The remote has changes you don't have locally. "
                         "Try pulling first."
                     )
-                await self._emit_action("result", "git_push", f"Push failed (exit {exit_code})", status="failed")
+                await self._emit_action("result", "git_push", f"Push failed (exit {exit_code})", status="failed", action_id=push_action_id)
                 return f"Push failed (exit {exit_code}):\n{error_msg}"
 
             result = stderr or stdout or "Push completed successfully."
-            await self._emit_action("result", "git_push", "Push completed", status="completed")
+            await self._emit_action("result", "git_push", "Push completed", status="completed", action_id=push_action_id)
             return sanitize_git_output(result, token)
         except RuntimeError as e:
-            await self._emit_action("result", "git_push", f"Error: {e}", status="failed")
+            await self._emit_command_output(
+                command_id=push_action_id, command=cmd,
+                output=str(e), exit_code=-1, done=True,
+            )
+            await self._emit_action("result", "git_push", f"Error: {e}", status="failed", action_id=push_action_id)
             return f"Error: {e}"
 
     @function_tool
@@ -491,11 +537,21 @@ class OrchestratorAgent(Agent):
         Args:
             query: The search query string.
         """
-        await self._emit_action("tool_call", "web_search", f"Searching: {query[:80]}")
+        search_action_id = await self._emit_action("tool_call", "web_search", f"Searching: {query[:80]}")
         result = await self._web.search(query)
         status = "failed" if result.startswith("Error") else "completed"
+        exit_code = 1 if status == "failed" else 0
+        # Send search results to terminal panel
+        await self._emit_command_output(
+            command_id=search_action_id,
+            command=f'search "{query[:80]}"',
+            output=result[:2048] if len(result) > 2048 else result,
+            exit_code=exit_code,
+            done=True,
+        )
         await self._emit_action(
-            "result", "web_search", f"Search {'completed' if status == 'completed' else 'failed'}", status=status
+            "result", "web_search", f"Search {'completed' if status == 'completed' else 'failed'}",
+            status=status, action_id=search_action_id,
         )
         return result
 
@@ -508,11 +564,21 @@ class OrchestratorAgent(Agent):
         Args:
             url: The full URL to fetch (must start with http:// or https://).
         """
-        await self._emit_action("tool_call", "web_fetch", f"Fetching: {url[:80]}")
+        fetch_action_id = await self._emit_action("tool_call", "web_fetch", f"Fetching: {url[:80]}")
         result = await self._web.fetch(url)
         status = "failed" if result.startswith("Error") else "completed"
+        exit_code = 1 if status == "failed" else 0
+        # Send fetch results to terminal panel
+        await self._emit_command_output(
+            command_id=fetch_action_id,
+            command=f"fetch {url[:80]}",
+            output=result[:2048] if len(result) > 2048 else result,
+            exit_code=exit_code,
+            done=True,
+        )
         await self._emit_action(
-            "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}", status=status
+            "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}",
+            status=status, action_id=fetch_action_id,
         )
         return result
 

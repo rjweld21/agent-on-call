@@ -182,6 +182,7 @@ function AgentInterface() {
           // Build terminal entries from command tool actions
           const commandTools = new Set([
             "exec_command", "git_clone", "git_commit", "git_push", "git_status",
+            "web_fetch", "web_search",
           ]);
           if (commandTools.has(action.tool)) {
             setTerminalEntries((prev) => {
