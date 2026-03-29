@@ -132,9 +132,36 @@ function AgentInterface() {
   const [textInput, setTextInput] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [ttsBanner, setTtsBanner] = useState<{ reason: string } | null>(null);
 
   // Sync settings changes to agent via data channel
   useSettingsSync(room);
+
+  // Listen for TTS status messages from the agent
+  useEffect(() => {
+    const handleDataReceived = (payload: unknown) => {
+      try {
+        // LiveKit data packet — extract data bytes
+        const packet = payload as { data?: Uint8Array };
+        if (!packet?.data) return;
+        const text = new TextDecoder().decode(packet.data);
+        const msg = JSON.parse(text);
+        if (msg?.type === "tts_status") {
+          if (msg.available === false && msg.reason) {
+            setTtsBanner({ reason: msg.reason });
+          } else if (msg.available === true) {
+            setTtsBanner(null);
+          }
+        }
+      } catch {
+        // Ignore non-JSON or unrelated messages
+      }
+    };
+    room.on("dataReceived", handleDataReceived);
+    return () => {
+      room.off("dataReceived", handleDataReceived);
+    };
+  }, [room]);
 
   // Track agent state transitions as activity items
   const prevStateRef = useRef(state);
@@ -260,6 +287,55 @@ function AgentInterface() {
           &#9881;
         </button>
       </div>
+
+      {/* TTS unavailable banner */}
+      {ttsBanner && (
+        <div
+          data-testid="tts-banner"
+          style={{
+            width: "100%",
+            maxWidth: "500px",
+            padding: "0.6rem 0.8rem",
+            background: "rgba(245, 158, 11, 0.15)",
+            border: "1px solid #f59e0b",
+            borderRadius: "8px",
+            color: "#fbbf24",
+            fontSize: "0.8rem",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "0.5rem",
+          }}
+        >
+          <span>
+            {ttsBanner.reason === "no_key"
+              ? "Voice responses unavailable. Add a Cartesia API key in settings for voice responses."
+              : ttsBanner.reason === "auth_failed"
+                ? "Voice responses unavailable. Cartesia API key is invalid."
+                : ttsBanner.reason === "no_credits"
+                  ? "Voice responses unavailable. Cartesia account has no credits remaining."
+                  : "Voice responses unavailable. Could not reach Cartesia API."}
+          </span>
+          <button
+            data-testid="tts-banner-dismiss"
+            onClick={() => setTtsBanner(null)}
+            aria-label="Dismiss TTS notification"
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fbbf24",
+              cursor: "pointer",
+              fontSize: "1rem",
+              lineHeight: 1,
+              padding: "0 0.2rem",
+              flexShrink: 0,
+            }}
+          >
+            &#10005;
+          </button>
+        </div>
+      )}
+
       <p style={{ color: "#94a3b8", margin: 0 }}>
         Agent Status:{" "}
         <span
@@ -272,7 +348,7 @@ function AgentInterface() {
             fontWeight: "bold",
           }}
         >
-          {state}
+          {state === "speaking" && ttsBanner ? "responding" : state}
         </span>
       </p>
 

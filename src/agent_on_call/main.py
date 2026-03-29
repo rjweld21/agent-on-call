@@ -138,19 +138,79 @@ def _get_participant_metadata(ctx: agents.JobContext) -> dict:
     return {}
 
 
-def _build_session(model: str | None) -> AgentSession:
-    """Build an AgentSession with STT, LLM, TTS, VAD, and turn-taking."""
+def _check_tts_available() -> tuple[bool, str]:
+    """Check if TTS is available by validating the Cartesia API key.
+
+    Returns (available, reason) where reason is one of:
+    - "" (empty string) if available
+    - "no_key" if CARTESIA_API_KEY is not set
+    - "auth_failed" if key is set but invalid (placeholder or clearly wrong)
+    """
+    api_key = os.environ.get("CARTESIA_API_KEY")
+    if not api_key or not api_key.strip():
+        return (False, "no_key")
+
+    # Check for placeholder values
+    placeholder_values = {"placeholder", "your_cartesia_api_key_here", "sk_test", ""}
+    if api_key.strip().lower() in placeholder_values:
+        return (False, "no_key")
+
+    # Key exists and looks real — assume available
+    # (Full health check with synthesis attempt would add latency; defer to runtime)
+    return (True, "")
+
+
+TTS_STATUS_MESSAGES = {
+    "no_key": (
+        "Voice responses unavailable. "
+        "Add a Cartesia API key in settings for voice responses."
+    ),
+    "auth_failed": (
+        "Voice responses unavailable. "
+        "Cartesia API key is invalid."
+    ),
+    "no_credits": (
+        "Voice responses unavailable. "
+        "Cartesia account has no credits remaining."
+    ),
+    "network_error": (
+        "Voice responses unavailable. "
+        "Could not reach Cartesia API."
+    ),
+}
+
+
+TEXT_MODE_INSTRUCTION = (
+    "\n\nNote: TTS is unavailable for this session. Your responses will appear as "
+    "text in the transcript only. Keep responses well-formatted for reading. "
+    "You do not need to change your behavior significantly — just be aware the "
+    "user is reading, not listening."
+)
+
+
+def _build_session(model: str | None, tts_enabled: bool = True) -> AgentSession:
+    """Build an AgentSession with STT, LLM, TTS, VAD, and turn-taking.
+
+    Args:
+        model: Optional model override.
+        tts_enabled: If False, TTS is omitted and the session runs in text-only mode.
+    """
     vad_cfg = DEFAULT_VAD_CONFIG
     tt_cfg = DEFAULT_TURN_TAKING_CONFIG
+
+    tts = None
+    if tts_enabled:
+        tts = cartesia.TTS(
+            api_key=os.environ.get("CARTESIA_API_KEY"),
+        )
+
     return AgentSession(
         stt=deepgram.STT(
             model="nova-3",
             api_key=os.environ.get("DEEPGRAM_API_KEY"),
         ),
         llm=_build_llm(model=model),
-        tts=cartesia.TTS(
-            api_key=os.environ.get("CARTESIA_API_KEY"),
-        ),
+        tts=tts,
         vad=silero.VAD.load(
             min_speech_duration=vad_cfg.min_speech_duration,
             min_silence_duration=vad_cfg.min_silence_duration,
@@ -226,16 +286,39 @@ async def orchestrator_session(ctx: agents.JobContext):
     if not isinstance(verbosity, int) or verbosity < 1 or verbosity > 5:
         verbosity = 3
 
+    # Check TTS availability
+    tts_available, tts_reason = _check_tts_available()
+    if not tts_available:
+        logger.warning("TTS unavailable (reason: %s) — running in text-only mode", tts_reason)
+
     # Build agent with verbosity-adjusted instructions
     agent = OrchestratorAgent()
-    agent._raw_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, verbosity)
+    base_instructions = ORCHESTRATOR_INSTRUCTIONS
+    if not tts_available:
+        base_instructions += TEXT_MODE_INSTRUCTION
+    agent._raw_instructions = _build_verbosity_instructions(base_instructions, verbosity)
 
-    session = _build_session(selected_model)
+    session = _build_session(selected_model, tts_enabled=tts_available)
 
     await session.start(room=ctx.room, agent=agent)
 
     # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
+
+    # Notify frontend of TTS status if unavailable
+    if not tts_available:
+        tts_status_msg = json.dumps({
+            "type": "tts_status",
+            "available": False,
+            "reason": tts_reason,
+        })
+        try:
+            await ctx.room.local_participant.publish_data(
+                tts_status_msg.encode(),
+                topic="tts_status",
+            )
+        except Exception as e:
+            logger.warning("Failed to send TTS status: %s", e)
 
     # --- Mid-session settings via data channel ---
     async def _on_data_received(data_packet: rtc.DataPacket):
