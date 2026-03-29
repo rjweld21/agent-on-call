@@ -34,5 +34,8 @@ out/
 .DS_Store
 Thumbs.db
 
+# Local-only (backlog, private notes, not for public repo)
+.local/
+
 # Superpowers
 .superpowers/
