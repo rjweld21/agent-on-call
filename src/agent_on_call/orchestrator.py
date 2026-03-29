@@ -47,15 +47,39 @@ class OrchestratorAgent(Agent):
             return f"Failed to create workspace: {e}"
 
     @function_tool
-    async def run_command(self, context: RunContext, command: str) -> str:
-        """Run a shell command in the active workspace. Use for: git clone, pip install, pytest, ls, etc."""
+    async def exec_command(
+        self, context: RunContext, command: str, timeout: int = 30
+    ) -> str:
+        """Execute a shell command in the active workspace. Use for: git, pip, pytest, ls, etc.
+
+        Args:
+            command: The shell command to run.
+            timeout: Max seconds to wait (default 30). Increase for long-running commands.
+        """
+        if not command or not command.strip():
+            return "Error: Command cannot be empty."
+        if len(command) > 10000:
+            return (
+                "Error: Command too long "
+                f"({len(command)} chars, max 10000). "
+                "Consider writing to a script file and executing it."
+            )
         try:
-            exit_code, output = self._workspace.exec_command(command)
+            exit_code, stdout, stderr = self._workspace.exec_command(
+                command, timeout=timeout
+            )
             # Truncate very long output
-            if len(output) > 2000:
-                output = output[:1000] + "\n...(truncated)...\n" + output[-500:]
-            status = "success" if exit_code == 0 else f"failed (exit code {exit_code})"
-            return f"[{status}]\n{output}"
+            if len(stdout) > 2000:
+                stdout = stdout[:1000] + "\n...(truncated)...\n" + stdout[-500:]
+            if len(stderr) > 1000:
+                stderr = stderr[:500] + "\n...(truncated)...\n" + stderr[-200:]
+            return (
+                f"Exit code: {exit_code}\n\n"
+                f"Stdout:\n{stdout}\n\n"
+                f"Stderr:\n{stderr}"
+            )
+        except TimeoutError:
+            return f"Error: Command timed out after {timeout}s: {command[:100]}"
         except RuntimeError as e:
             return f"Error: {e}"
 
