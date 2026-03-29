@@ -114,6 +114,7 @@ class OrchestratorAgent(Agent):
         output: str,
         exit_code: int,
         done: bool = True,
+        tool: str = "",
     ) -> None:
         """Publish command output to the frontend via data channel.
 
@@ -127,6 +128,7 @@ class OrchestratorAgent(Agent):
             output: The output text (stdout + stderr)
             exit_code: The command exit code
             done: Whether the command has finished
+            tool: Which tool ran (e.g. exec_command, git_clone, web_fetch)
         """
         if self._room is None:
             return
@@ -144,6 +146,8 @@ class OrchestratorAgent(Agent):
                 "output": output,
                 "exitCode": exit_code,
                 "done": done,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "tool": tool,
             }
         )
         try:
@@ -212,6 +216,7 @@ class OrchestratorAgent(Agent):
                 output=full_output,
                 exit_code=exit_code,
                 done=True,
+                tool="exec_command",
             )
 
             # Truncate for LLM context (the full output was already sent to terminal)
@@ -237,6 +242,7 @@ class OrchestratorAgent(Agent):
                 output=f"Command timed out after {timeout}s",
                 exit_code=-1,
                 done=True,
+                tool="exec_command",
             )
             await self._emit_action(
                 "result", "exec_command",
@@ -252,6 +258,7 @@ class OrchestratorAgent(Agent):
                 output=str(e),
                 exit_code=-1,
                 done=True,
+                tool="exec_command",
             )
             await self._emit_action(
                 "result", "exec_command",
@@ -360,6 +367,7 @@ class OrchestratorAgent(Agent):
                 output=output,
                 exit_code=exit_code,
                 done=True,
+                tool="git_clone",
             )
 
             if exit_code != 0:
@@ -375,6 +383,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=clone_action_id, command=display_cmd,
                 output="Clone timed out after 120s", exit_code=-1, done=True,
+                tool="git_clone",
             )
             await self._emit_action("result", "git_clone", "Clone timed out", status="failed", action_id=clone_action_id)
             return "Error: Clone timed out after 120s. The repository may be very large."
@@ -382,6 +391,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=clone_action_id, command=display_cmd,
                 output=str(e), exit_code=-1, done=True,
+                tool="git_clone",
             )
             await self._emit_action("result", "git_clone", f"Error: {e}", status="failed", action_id=clone_action_id)
             return f"Error: {e}"
@@ -399,6 +409,7 @@ class OrchestratorAgent(Agent):
                 output=output,
                 exit_code=exit_code,
                 done=True,
+                tool="git_status",
             )
             if exit_code != 0:
                 await self._emit_action("result", "git_status", "git status failed", status="failed", action_id=status_action_id)
@@ -409,6 +420,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=status_action_id, command="git status",
                 output=str(e), exit_code=-1, done=True,
+                tool="git_status",
             )
             await self._emit_action("result", "git_status", f"Error: {e}", status="failed", action_id=status_action_id)
             return f"Error: {e}"
@@ -433,6 +445,7 @@ class OrchestratorAgent(Agent):
                 await self._emit_command_output(
                     command_id=commit_action_id, command=f"git add {files}",
                     output=add_output, exit_code=exit_code, done=True,
+                    tool="git_commit",
                 )
                 await self._emit_action("result", "git_commit", "git add failed", status="failed", action_id=commit_action_id)
                 return f"git add failed:\n{stderr or stdout}"
@@ -449,6 +462,7 @@ class OrchestratorAgent(Agent):
                 output=full_output,
                 exit_code=exit_code,
                 done=True,
+                tool="git_commit",
             )
             if exit_code != 0:
                 output = stdout or stderr
@@ -464,6 +478,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=commit_action_id, command=f"git commit -m '{message[:60]}'",
                 output=str(e), exit_code=-1, done=True,
+                tool="git_commit",
             )
             await self._emit_action("result", "git_commit", f"Error: {e}", status="failed", action_id=commit_action_id)
             return f"Error: {e}"
@@ -503,6 +518,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=push_action_id, command=cmd,
                 output=push_output, exit_code=exit_code, done=True,
+                tool="git_push",
             )
 
             if exit_code != 0:
@@ -527,6 +543,7 @@ class OrchestratorAgent(Agent):
             await self._emit_command_output(
                 command_id=push_action_id, command=cmd,
                 output=str(e), exit_code=-1, done=True,
+                tool="git_push",
             )
             await self._emit_action("result", "git_push", f"Error: {e}", status="failed", action_id=push_action_id)
             return f"Error: {e}"
@@ -551,6 +568,7 @@ class OrchestratorAgent(Agent):
             output=result[:2048] if len(result) > 2048 else result,
             exit_code=exit_code,
             done=True,
+            tool="web_search",
         )
         await self._emit_action(
             "result", "web_search", f"Search {'completed' if status == 'completed' else 'failed'}",
@@ -578,6 +596,7 @@ class OrchestratorAgent(Agent):
             output=result[:2048] if len(result) > 2048 else result,
             exit_code=exit_code,
             done=True,
+            tool="web_fetch",
         )
         await self._emit_action(
             "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}",
