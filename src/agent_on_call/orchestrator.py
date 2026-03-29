@@ -155,13 +155,20 @@ class OrchestratorAgent(Agent):
             logger.warning("Failed to emit command output: %s", e)
 
     @function_tool
-    async def create_workspace(self, context: RunContext, name: str) -> str:
-        """Create a new isolated workspace for a project. Use a short descriptive name like 'my-app' or 'data-analysis'."""
-        await self._emit_action("tool_call", "create_workspace", f"Creating workspace '{name}'...")
+    async def create_workspace(self, context: RunContext, name: str, clean: bool = True) -> str:
+        """Create a new isolated workspace for a project. Use a short descriptive name like 'my-app' or 'data-analysis'.
+
+        Args:
+            name: Short descriptive name for the workspace.
+            clean: If True (default), removes any existing workspace with the same name first.
+                   Set to False to resume a previous workspace.
+        """
+        action = "Creating" if clean else "Resuming"
+        await self._emit_action("tool_call", "create_workspace", f"{action} workspace '{name}'...")
         try:
-            container_id = self._workspace.create_workspace(name)
-            await self._emit_action("result", "create_workspace", f"Workspace '{name}' created", status="completed")
-            return f"Workspace '{name}' created successfully (container: {container_id[:12]})"
+            container_id = self._workspace.create_workspace(name, clean=clean)
+            await self._emit_action("result", "create_workspace", f"Workspace '{name}' {'created' if clean else 'resumed'}", status="completed")
+            return f"Workspace '{name}' {'created' if clean else 'resumed'} successfully (container: {container_id[:12]})"
         except Exception as e:
             await self._emit_action("result", "create_workspace", f"Failed to create workspace: {e}", status="failed")
             return f"Failed to create workspace: {e}"
