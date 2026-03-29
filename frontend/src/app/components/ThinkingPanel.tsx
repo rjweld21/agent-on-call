@@ -10,6 +10,8 @@ export interface ActivityItem {
   text: string;
   timestamp: Date;
   detail?: string;
+  tool?: string;
+  status?: "started" | "completed" | "failed";
 }
 
 interface ThinkingPanelProps {
@@ -24,8 +26,15 @@ const TYPE_STYLES: Record<ActivityType, { color: string; prefix: string; fontSty
   result: { color: "#60a5fa", prefix: "Result", fontStyle: undefined },
 };
 
+const STATUS_INDICATORS: Record<string, { symbol: string; color: string }> = {
+  started: { symbol: "\u25CB", color: "#f59e0b" },    // ○ yellow circle
+  completed: { symbol: "\u2713", color: "#22c55e" },   // ✓ green check
+  failed: { symbol: "\u2717", color: "#ef4444" },      // ✗ red x
+};
+
 export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new activities arrive
@@ -34,6 +43,18 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [activities.length, isCollapsed]);
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   return (
     <div
@@ -100,7 +121,7 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
           ref={scrollRef}
           data-testid="thinking-panel-content"
           style={{
-            maxHeight: "180px",
+            maxHeight: "250px",
             overflowY: "auto",
             padding: "0.5rem 0.8rem",
           }}
@@ -119,7 +140,11 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
             </p>
           ) : (
             activities.map((item) => {
-              const style = TYPE_STYLES[item.type];
+              const typeStyle = TYPE_STYLES[item.type];
+              const statusIndicator = item.status ? STATUS_INDICATORS[item.status] : null;
+              const isExpanded = expandedIds.has(item.id);
+              const hasDetail = !!item.detail;
+
               return (
                 <div
                   key={item.id}
@@ -130,37 +155,95 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
                     borderBottom: "1px solid #1e293b",
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      color: style.color,
-                      fontWeight: 600,
-                      marginRight: "0.4rem",
-                      fontFamily:
-                        item.type === "executing" ? "monospace" : "inherit",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                      cursor: hasDetail ? "pointer" : "default",
                     }}
+                    onClick={hasDetail ? () => toggleExpanded(item.id) : undefined}
+                    data-testid={hasDetail ? "activity-detail-toggle" : undefined}
                   >
-                    [{style.prefix}]
-                  </span>
-                  <span
-                    style={{
-                      color: "#cbd5e1",
-                      fontStyle: style.fontStyle || "normal",
-                      fontFamily:
-                        item.type === "executing" ? "monospace" : "inherit",
-                    }}
-                  >
-                    {item.text}
-                  </span>
-                  {item.detail && (
+                    {/* Status indicator */}
+                    {statusIndicator && (
+                      <span
+                        data-testid="activity-status"
+                        style={{
+                          color: statusIndicator.color,
+                          fontSize: "0.75rem",
+                          flexShrink: 0,
+                          width: "1rem",
+                          textAlign: "center",
+                        }}
+                      >
+                        {statusIndicator.symbol}
+                      </span>
+                    )}
+
+                    {/* Type prefix */}
+                    <span
+                      style={{
+                        color: typeStyle.color,
+                        fontWeight: 600,
+                        marginRight: "0.2rem",
+                        fontFamily:
+                          item.type === "executing" ? "monospace" : "inherit",
+                        flexShrink: 0,
+                      }}
+                    >
+                      [{typeStyle.prefix}]
+                    </span>
+
+                    {/* Summary text */}
+                    <span
+                      style={{
+                        color: "#cbd5e1",
+                        fontStyle: typeStyle.fontStyle || "normal",
+                        fontFamily:
+                          item.type === "executing" ? "monospace" : "inherit",
+                        flex: 1,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.text}
+                    </span>
+
+                    {/* Expand/collapse indicator */}
+                    {hasDetail && (
+                      <span
+                        style={{
+                          color: "#64748b",
+                          fontSize: "0.65rem",
+                          flexShrink: 0,
+                          transform: isExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                          transition: "transform 0.15s",
+                        }}
+                      >
+                        &#9660;
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Collapsible detail */}
+                  {hasDetail && isExpanded && (
                     <div
+                      data-testid="activity-detail"
                       style={{
                         color: "#64748b",
                         fontSize: "0.7rem",
                         marginTop: "0.15rem",
+                        marginLeft: statusIndicator ? "1.3rem" : "0",
                         fontFamily: "monospace",
                         whiteSpace: "pre-wrap",
-                        maxHeight: "60px",
-                        overflow: "hidden",
+                        maxHeight: "120px",
+                        overflow: "auto",
+                        padding: "0.3rem",
+                        background: "rgba(15, 23, 42, 0.5)",
+                        borderRadius: "4px",
+                        border: "1px solid #1e293b",
                       }}
                     >
                       {item.detail}

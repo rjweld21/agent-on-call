@@ -153,6 +153,29 @@ function AgentInterface() {
             setTtsBanner(null);
           }
         }
+        // Handle agent action events for the activity panel
+        if (msg?.type === "agent_action" && msg.action) {
+          const action = msg.action;
+          const newItem: ActivityItem = {
+            id: action.id,
+            type: action.kind as ActivityItem["type"],
+            text: action.summary,
+            timestamp: new Date(action.timestamp || Date.now()),
+            detail: action.detail || undefined,
+            tool: action.tool,
+            status: action.status,
+          };
+          setActivities((prev) => {
+            // If action with same ID exists, update it in-place (status change)
+            const existingIdx = prev.findIndex((a) => a.id === action.id);
+            if (existingIdx >= 0) {
+              const updated = [...prev];
+              updated[existingIdx] = { ...updated[existingIdx], ...newItem };
+              return updated;
+            }
+            return [...prev, newItem];
+          });
+        }
       } catch {
         // Ignore non-JSON or unrelated messages
       }
@@ -162,37 +185,6 @@ function AgentInterface() {
       room.off("dataReceived", handleDataReceived);
     };
   }, [room]);
-
-  // Track agent state transitions as activity items
-  const prevStateRef = useRef(state);
-  useEffect(() => {
-    if (state !== prevStateRef.current) {
-      const prevState = prevStateRef.current;
-      prevStateRef.current = state;
-
-      if (state === "thinking") {
-        setActivities((prev) => [
-          ...prev,
-          {
-            id: `thinking-${Date.now()}`,
-            type: "thinking" as const,
-            text: "Processing...",
-            timestamp: new Date(),
-          },
-        ]);
-      } else if (state === "speaking" && prevState === "thinking") {
-        setActivities((prev) => [
-          ...prev,
-          {
-            id: `result-${Date.now()}`,
-            type: "result" as const,
-            text: "Responding to user",
-            timestamp: new Date(),
-          },
-        ]);
-      }
-    }
-  }, [state]);
 
   // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
   const micTrackRef = microphoneTrack

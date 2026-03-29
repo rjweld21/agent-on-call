@@ -1,9 +1,14 @@
 """Orchestrator Agent — voice interface and sub-agent coordination."""
 
+import json
+import logging
 import os
+import time
 
 from livekit.agents import Agent, RunContext
 from livekit.agents.llm import function_tool
+
+logger = logging.getLogger(__name__)
 
 from agent_on_call.guidance_queue import GuidanceQueue
 from agent_on_call.workspace import (
@@ -42,14 +47,63 @@ class OrchestratorAgent(Agent):
         super().__init__(instructions=ORCHESTRATOR_INSTRUCTIONS)
         self.guidance_queue = GuidanceQueue()
         self._workspace = WorkspaceManager()
+        self._room = None
+
+    def set_room(self, room) -> None:
+        """Set the room reference for publishing action events via data channel."""
+        self._room = room
+
+    async def _emit_action(
+        self,
+        kind: str,
+        tool: str,
+        summary: str,
+        detail: str = "",
+        status: str = "started",
+    ) -> None:
+        """Publish an agent action event to the frontend via data channel.
+
+        Args:
+            kind: Action type — "thinking", "executing", "tool_call", or "result"
+            tool: The function_tool name (e.g., "exec_command", "git_clone")
+            summary: Human-readable one-liner for the activity panel
+            detail: Full command or output (shown when expanded)
+            status: Lifecycle state — "started", "completed", or "failed"
+        """
+        if self._room is None:
+            return
+
+        action_id = f"action-{int(time.time() * 1000)}-{tool}"
+        message = json.dumps({
+            "type": "agent_action",
+            "action": {
+                "id": action_id,
+                "kind": kind,
+                "tool": tool,
+                "summary": summary,
+                "detail": detail,
+                "status": status,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+        })
+        try:
+            await self._room.local_participant.publish_data(
+                message.encode(),
+                topic="agent_actions",
+            )
+        except Exception as e:
+            logger.warning("Failed to emit action event: %s", e)
 
     @function_tool
     async def create_workspace(self, context: RunContext, name: str) -> str:
         """Create a new isolated workspace for a project. Use a short descriptive name like 'my-app' or 'data-analysis'."""
+        await self._emit_action("tool_call", "create_workspace", f"Creating workspace '{name}'...")
         try:
             container_id = self._workspace.create_workspace(name)
+            await self._emit_action("result", "create_workspace", f"Workspace '{name}' created", status="completed")
             return f"Workspace '{name}' created successfully (container: {container_id[:12]})"
         except Exception as e:
+            await self._emit_action("result", "create_workspace", f"Failed to create workspace: {e}", status="failed")
             return f"Failed to create workspace: {e}"
 
     @function_tool
@@ -70,6 +124,11 @@ class OrchestratorAgent(Agent):
                 f"({len(command)} chars, max 10000). "
                 "Consider writing to a script file and executing it."
             )
+        await self._emit_action(
+            "executing", "exec_command",
+            f"Running: {command[:80]}{'...' if len(command) > 80 else ''}",
+            detail=command,
+        )
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(
                 command, timeout=timeout
@@ -79,39 +138,59 @@ class OrchestratorAgent(Agent):
                 stdout = stdout[:1000] + "\n...(truncated)...\n" + stdout[-500:]
             if len(stderr) > 1000:
                 stderr = stderr[:500] + "\n...(truncated)...\n" + stderr[-200:]
-            return (
+            result = (
                 f"Exit code: {exit_code}\n\n"
                 f"Stdout:\n{stdout}\n\n"
                 f"Stderr:\n{stderr}"
             )
+            status = "completed" if exit_code == 0 else "failed"
+            await self._emit_action(
+                "result", "exec_command",
+                f"Command {'completed' if exit_code == 0 else 'failed'} (exit {exit_code})",
+                detail=stdout[:200] if stdout else stderr[:200],
+                status=status,
+            )
+            return result
         except TimeoutError:
+            await self._emit_action("result", "exec_command", f"Command timed out after {timeout}s", status="failed")
             return f"Error: Command timed out after {timeout}s: {command[:100]}"
         except RuntimeError as e:
+            await self._emit_action("result", "exec_command", f"Error: {e}", status="failed")
             return f"Error: {e}"
 
     @function_tool
     async def read_file(self, context: RunContext, path: str) -> str:
         """Read the contents of a file in the workspace."""
+        await self._emit_action("tool_call", "read_file", f"Reading: {path}")
         try:
             content = self._workspace.read_file(path)
             if len(content) > 3000:
                 content = content[:1500] + "\n...(truncated)...\n" + content[-500:]
+            await self._emit_action("result", "read_file", f"Read {len(content)} chars from {path}", status="completed")
             return content
         except FileNotFoundError as e:
+            await self._emit_action("result", "read_file", f"File not found: {path}", status="failed")
             return f"Error: {e}"
 
     @function_tool
     async def write_file(self, context: RunContext, path: str, content: str) -> str:
         """Write content to a file in the workspace."""
+        await self._emit_action("tool_call", "write_file", f"Writing: {path}")
         try:
-            return self._workspace.write_file(path, content)
+            result = self._workspace.write_file(path, content)
+            await self._emit_action("result", "write_file", f"Written to {path}", status="completed")
+            return result
         except IOError as e:
+            await self._emit_action("result", "write_file", f"Write failed: {path}", status="failed")
             return f"Error: {e}"
 
     @function_tool
     async def list_files(self, context: RunContext, path: str = "/workspace") -> str:
         """List files and directories in the workspace."""
-        return self._workspace.list_files(path)
+        await self._emit_action("tool_call", "list_files", f"Listing: {path}")
+        result = self._workspace.list_files(path)
+        await self._emit_action("result", "list_files", f"Listed files in {path}", status="completed")
+        return result
 
     @function_tool
     async def list_workspaces(self, context: RunContext) -> str:
@@ -147,6 +226,7 @@ class OrchestratorAgent(Agent):
         if not repo_url or not repo_url.strip():
             return "Error: Repository URL cannot be empty."
 
+        await self._emit_action("executing", "git_clone", f"Cloning: {repo_url}")
         token = self._get_git_token()
         credentialed_url = inject_git_credentials(repo_url, token)
 
@@ -177,23 +257,30 @@ class OrchestratorAgent(Agent):
                 return f"Clone failed (exit {exit_code}):\n{error_msg}"
 
             result = stdout or stderr or "Clone completed successfully."
+            await self._emit_action("result", "git_clone", "Clone completed", status="completed")
             return sanitize_git_output(result, token)
         except TimeoutError:
+            await self._emit_action("result", "git_clone", "Clone timed out", status="failed")
             return "Error: Clone timed out after 120s. The repository may be very large."
         except RuntimeError as e:
+            await self._emit_action("result", "git_clone", f"Error: {e}", status="failed")
             return f"Error: {e}"
 
     @function_tool
     async def git_status(self, context: RunContext) -> str:
         """Show the git working tree status in the workspace."""
+        await self._emit_action("tool_call", "git_status", "Checking git status")
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(
                 "git status"
             )
             if exit_code != 0:
+                await self._emit_action("result", "git_status", "git status failed", status="failed")
                 return f"git status failed:\n{stderr or stdout}"
+            await self._emit_action("result", "git_status", "Status retrieved", status="completed")
             return stdout
         except RuntimeError as e:
+            await self._emit_action("result", "git_status", f"Error: {e}", status="failed")
             return f"Error: {e}"
 
     @function_tool
@@ -209,12 +296,14 @@ class OrchestratorAgent(Agent):
         if not message or not message.strip():
             return "Error: Commit message cannot be empty."
 
+        await self._emit_action("executing", "git_commit", f"Committing: {message[:60]}")
         try:
             # Stage files
             exit_code, stdout, stderr = self._workspace.exec_command(
                 f"git add {files}"
             )
             if exit_code != 0:
+                await self._emit_action("result", "git_commit", "git add failed", status="failed")
                 return f"git add failed:\n{stderr or stdout}"
 
             # Commit
@@ -226,11 +315,15 @@ class OrchestratorAgent(Agent):
             if exit_code != 0:
                 output = stdout or stderr
                 if "nothing to commit" in output.lower():
+                    await self._emit_action("result", "git_commit", "Nothing to commit", status="completed")
                     return "Nothing to commit — working tree is clean."
+                await self._emit_action("result", "git_commit", "Commit failed", status="failed")
                 return f"git commit failed:\n{output}"
 
+            await self._emit_action("result", "git_commit", "Committed successfully", status="completed")
             return f"Committed successfully:\n{stdout}"
         except RuntimeError as e:
+            await self._emit_action("result", "git_commit", f"Error: {e}", status="failed")
             return f"Error: {e}"
 
     @function_tool
@@ -252,6 +345,7 @@ class OrchestratorAgent(Agent):
         if branch:
             cmd += f" {branch}"
 
+        await self._emit_action("executing", "git_push", f"Pushing to {remote}" + (f" {branch}" if branch else ""))
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(cmd)
             stdout = sanitize_git_output(stdout, token)
@@ -260,19 +354,24 @@ class OrchestratorAgent(Agent):
             if exit_code != 0:
                 error_msg = stderr or stdout
                 if "authentication failed" in error_msg.lower():
+                    await self._emit_action("result", "git_push", "Authentication failed", status="failed")
                     return (
                         "Error: Authentication failed. "
                         "Check GIT_TOKEN environment variable."
                     )
                 if "rejected" in error_msg.lower():
+                    await self._emit_action("result", "git_push", "Push rejected", status="failed")
                     return (
                         f"Push rejected:\n{error_msg}\n\n"
                         "The remote has changes you don't have locally. "
                         "Try pulling first."
                     )
+                await self._emit_action("result", "git_push", f"Push failed (exit {exit_code})", status="failed")
                 return f"Push failed (exit {exit_code}):\n{error_msg}"
 
             result = stderr or stdout or "Push completed successfully."
+            await self._emit_action("result", "git_push", "Push completed", status="completed")
             return sanitize_git_output(result, token)
         except RuntimeError as e:
+            await self._emit_action("result", "git_push", f"Error: {e}", status="failed")
             return f"Error: {e}"

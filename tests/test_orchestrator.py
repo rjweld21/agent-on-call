@@ -1,8 +1,85 @@
 """Tests for OrchestratorAgent."""
 
+import json
 import os
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
+
+
+class TestEmitAction:
+    @pytest.mark.asyncio
+    async def test_emit_action_publishes_to_data_channel(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            await agent._emit_action("executing", "exec_command", "Running: ls", detail="ls -la")
+
+            mock_room.local_participant.publish_data.assert_called_once()
+            call_args = mock_room.local_participant.publish_data.call_args
+            payload = json.loads(call_args[0][0].decode())
+            assert payload["type"] == "agent_action"
+            assert payload["action"]["kind"] == "executing"
+            assert payload["action"]["tool"] == "exec_command"
+            assert payload["action"]["summary"] == "Running: ls"
+            assert payload["action"]["detail"] == "ls -la"
+            assert payload["action"]["status"] == "started"
+            assert "id" in payload["action"]
+            assert "timestamp" in payload["action"]
+
+    @pytest.mark.asyncio
+    async def test_emit_action_noop_when_no_room(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            # No set_room call — _room is None
+            # Should not raise
+            await agent._emit_action("executing", "exec_command", "test")
+
+    @pytest.mark.asyncio
+    async def test_emit_action_handles_publish_error(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock(
+                side_effect=RuntimeError("publish failed")
+            )
+            agent.set_room(mock_room)
+
+            # Should not raise — error is caught and logged
+            await agent._emit_action("executing", "exec_command", "test")
+
+    @pytest.mark.asyncio
+    async def test_exec_command_emits_started_and_completed(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "hello", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.exec_command(ctx, command="echo hello")
+
+            # Should have emitted at least 2 actions: started and completed
+            calls = mock_room.local_participant.publish_data.call_args_list
+            assert len(calls) >= 2
+            first_payload = json.loads(calls[0][0][0].decode())
+            assert first_payload["action"]["status"] == "started"
+            last_payload = json.loads(calls[-1][0][0].decode())
+            assert last_payload["action"]["status"] == "completed"
 
 
 class TestOrchestratorAgent:
