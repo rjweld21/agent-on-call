@@ -302,6 +302,9 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     await session.start(room=ctx.room, agent=agent)
 
+    # Set room reference for action event publishing
+    agent.set_room(ctx.room)
+
     # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
 
