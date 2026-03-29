@@ -5,6 +5,7 @@ import logging
 import os
 from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 from livekit import agents, rtc
 from livekit.agents import AgentServer, AgentSession
@@ -141,10 +142,16 @@ def _get_participant_metadata(ctx: agents.JobContext) -> dict:
 def _check_tts_available() -> tuple[bool, str]:
     """Check if TTS is available by validating the Cartesia API key.
 
+    Makes an actual HTTP request to Cartesia's voices endpoint to verify the
+    key is valid and the account has credits. This catches expired keys and
+    accounts with no remaining credits at session start.
+
     Returns (available, reason) where reason is one of:
     - "" (empty string) if available
     - "no_key" if CARTESIA_API_KEY is not set
-    - "auth_failed" if key is set but invalid (placeholder or clearly wrong)
+    - "auth_failed" if key is invalid (401/403)
+    - "no_credits" if account has no credits (402)
+    - "network_error" if the API is unreachable
     """
     api_key = os.environ.get("CARTESIA_API_KEY")
     if not api_key or not api_key.strip():
@@ -155,8 +162,29 @@ def _check_tts_available() -> tuple[bool, str]:
     if api_key.strip().lower() in placeholder_values:
         return (False, "no_key")
 
-    # Key exists and looks real — assume available
-    # (Full health check with synthesis attempt would add latency; defer to runtime)
+    # Validate the key with a lightweight API call
+    try:
+        resp = httpx.get(
+            "https://api.cartesia.ai/voices",
+            headers={
+                "X-API-Key": api_key.strip(),
+                "Cartesia-Version": "2024-06-10",
+            },
+            timeout=5.0,
+        )
+        if resp.status_code == 401 or resp.status_code == 403:
+            logger.warning("Cartesia API key is invalid (HTTP %d)", resp.status_code)
+            return (False, "auth_failed")
+        if resp.status_code == 402:
+            logger.warning("Cartesia account has no credits (HTTP 402)")
+            return (False, "no_credits")
+        if resp.status_code >= 400:
+            logger.warning("Cartesia API returned HTTP %d during health check", resp.status_code)
+            return (False, "network_error")
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as exc:
+        logger.warning("Could not reach Cartesia API for health check: %s", exc)
+        return (False, "network_error")
+
     return (True, "")
 
 
@@ -308,12 +336,12 @@ async def orchestrator_session(ctx: agents.JobContext):
     # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
 
-    # Notify frontend of TTS status if unavailable
-    if not tts_available:
+    async def _notify_tts_disabled(reason: str):
+        """Send a tts_status message to the frontend via data channel."""
         tts_status_msg = json.dumps({
             "type": "tts_status",
             "available": False,
-            "reason": tts_reason,
+            "reason": reason,
         })
         try:
             await ctx.room.local_participant.publish_data(
@@ -322,6 +350,50 @@ async def orchestrator_session(ctx: agents.JobContext):
             )
         except Exception as e:
             logger.warning("Failed to send TTS status: %s", e)
+
+    # Notify frontend of TTS status if unavailable
+    if not tts_available:
+        await _notify_tts_disabled(tts_reason)
+
+    # --- Runtime TTS error handling ---
+    # If TTS fails mid-session (e.g. credits run out), disable it and continue
+    # in text-only mode rather than crashing the session.
+    tts_disabled_at_runtime = False
+
+    @session.on("error")
+    async def _on_session_error(error):
+        nonlocal tts_disabled_at_runtime
+        if tts_disabled_at_runtime:
+            return
+
+        from livekit.agents import tts as tts_module
+        if not isinstance(error, tts_module.TTSError):
+            return
+
+        # Determine reason from the underlying error
+        reason = "network_error"
+        err = error.error
+        if hasattr(err, "status_code"):
+            if err.status_code in (401, 403):
+                reason = "auth_failed"
+            elif err.status_code == 402:
+                reason = "no_credits"
+
+        logger.warning(
+            "TTS failed at runtime (reason: %s) — disabling TTS for this session",
+            reason,
+        )
+        tts_disabled_at_runtime = True
+
+        # Remove TTS from the session so it switches to text-only
+        session._tts = None
+
+        # Update agent instructions to reflect text-only mode
+        agent._raw_instructions = _build_verbosity_instructions(
+            ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity
+        )
+
+        await _notify_tts_disabled(reason)
 
     # --- Mid-session settings via data channel ---
     async def _on_data_received(data_packet: rtc.DataPacket):
