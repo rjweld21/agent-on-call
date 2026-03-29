@@ -39,3 +39,6 @@ Thumbs.db
 
 # Superpowers
 .superpowers/
+
+# Agent transcripts (user conversations — never commit)
+.aoc/transcripts/
