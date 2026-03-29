@@ -41,8 +41,30 @@ class WorkspaceManager:
         self._active_container: Container | None = None
         self._workspace_name: str | None = None
 
-    def create_workspace(self, name: str) -> str:
-        """Create and start a new workspace container with a persistent volume."""
+    def create_workspace(self, name: str, clean: bool = True) -> str:
+        """Create and start a new workspace container with a persistent volume.
+
+        Args:
+            name: Short descriptive name for the workspace.
+            clean: If True (default), removes any existing workspace with the
+                   same name first so each session starts fresh. If False,
+                   reuses an existing running/stopped container.
+        """
+        if clean:
+            # Remove existing container and volume for a fresh start
+            self.delete_workspace(name)
+        else:
+            # Try to reuse an existing container
+            try:
+                existing = self._client.containers.get(f"aoc-ws-{name}")
+                if existing.status != "running":
+                    existing.start()
+                self._active_container = existing
+                self._workspace_name = name
+                return existing.id
+            except docker.errors.NotFound:
+                pass  # No existing container — create fresh below
+
         volume_name = f"aoc-workspace-{name}"
         container = self._client.containers.run(
             self._image,
