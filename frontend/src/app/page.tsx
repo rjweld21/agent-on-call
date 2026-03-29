@@ -15,6 +15,8 @@ import { Track } from "livekit-client";
 import "@livekit/components-styles";
 import { useCallback, useState, useEffect, useRef, KeyboardEvent } from "react";
 import { formatElapsedTime, detectGap, getSessionStartTime } from "@/lib/transcript-time";
+import { SettingsProvider } from "@/lib/settings-context";
+import { SettingsPanel } from "@/app/components/SettingsPanel";
 
 interface TranscriptEntry {
   id: string;
@@ -126,6 +128,7 @@ function AgentInterface() {
   const { localParticipant, microphoneTrack } = useLocalParticipant();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textInput, setTextInput] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
   const micTrackRef = microphoneTrack
@@ -200,7 +203,26 @@ function AgentInterface() {
         overflow: "auto",
       }}
     >
-      <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", margin: 0 }}>Agent On Call</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", margin: 0 }}>Agent On Call</h1>
+        <button
+          data-testid="settings-button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Open settings"
+          style={{
+            background: "none",
+            border: "1px solid #334155",
+            borderRadius: "8px",
+            color: "#94a3b8",
+            cursor: "pointer",
+            fontSize: "1.2rem",
+            padding: "0.3rem 0.5rem",
+            lineHeight: 1,
+          }}
+        >
+          &#9881;
+        </button>
+      </div>
       <p style={{ color: "#94a3b8", margin: 0 }}>
         Agent Status:{" "}
         <span
@@ -352,6 +374,8 @@ function AgentInterface() {
       }}>
         Leave Call
       </DisconnectButton>
+
+      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
@@ -382,19 +406,21 @@ export default function Home() {
 
   if (connectionDetails) {
     return (
-      <div style={{ height: "100vh", background: "#0f172a" }}>
-        <LiveKitRoom
-          token={connectionDetails.token}
-          serverUrl={connectionDetails.url}
-          connect={true}
-          audio={true}
-          onDisconnected={disconnect}
-          style={{ height: "100%" }}
+      <SettingsProvider>
+        <div style={{ height: "100vh", background: "#0f172a" }}>
+          <LiveKitRoom
+            token={connectionDetails.token}
+            serverUrl={connectionDetails.url}
+            connect={true}
+            audio={true}
+            onDisconnected={disconnect}
+            style={{ height: "100%" }}
         >
-          <AgentInterface />
-          <RoomAudioRenderer />
-        </LiveKitRoom>
-      </div>
+            <AgentInterface />
+            <RoomAudioRenderer />
+          </LiveKitRoom>
+        </div>
+      </SettingsProvider>
     );
   }
 
