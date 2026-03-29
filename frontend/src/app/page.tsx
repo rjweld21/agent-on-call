@@ -126,6 +126,7 @@ function AgentInterface() {
   const { localParticipant, microphoneTrack } = useLocalParticipant();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [textInput, setTextInput] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
   const micTrackRef = microphoneTrack
@@ -134,7 +135,6 @@ function AgentInterface() {
 
   const { segments: userSegments } = useTrackTranscription(micTrackRef);
   const { chatMessages, send, isSending } = useChat();
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Build a unified, time-sorted transcript from agent transcriptions,
   // user voice transcriptions, and chat messages. Only show final segments.
