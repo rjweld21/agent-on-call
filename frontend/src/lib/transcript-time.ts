@@ -72,14 +72,14 @@ export const GROUPING_WINDOW_MS = 2000;
 
 export interface TranscriptEntry {
   id: string;
-  speaker: "user" | "agent" | "user-text";
+  speaker: "user" | "agent" | "user-text" | "system";
   text: string;
   timestamp: Date;
 }
 
 export interface GroupedTranscriptEntry {
   ids: string[];
-  speaker: "user" | "agent" | "user-text";
+  speaker: "user" | "agent" | "user-text" | "system";
   text: string;
   timestamp: Date;
   lastTimestamp: Date;
@@ -102,6 +102,7 @@ export function groupTranscriptEntries(
     if (
       last &&
       last.speaker === entry.speaker &&
+      entry.speaker !== "system" &&
       entry.timestamp.getTime() - last.lastTimestamp.getTime() < windowMs
     ) {
       last.ids.push(entry.id);

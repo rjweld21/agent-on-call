@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 
-export type ActivityType = "thinking" | "executing" | "tool_call" | "result";
+export type ActivityType = "thinking" | "executing" | "tool_call" | "result" | "system";
 
 export interface ActivityItem {
   id: string;
@@ -24,6 +24,7 @@ const TYPE_STYLES: Record<ActivityType, { color: string; prefix: string; fontSty
   executing: { color: "#22c55e", prefix: "Running", fontStyle: undefined },
   tool_call: { color: "#f59e0b", prefix: "Tool", fontStyle: undefined },
   result: { color: "#60a5fa", prefix: "Result", fontStyle: undefined },
+  system: { color: "#38bdf8", prefix: "System", fontStyle: "italic" },
 };
 
 const STATUS_INDICATORS: Record<string, { symbol: string; color: string }> = {
