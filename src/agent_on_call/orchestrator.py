@@ -11,6 +11,7 @@ from livekit.agents.llm import function_tool
 logger = logging.getLogger(__name__)
 
 from agent_on_call.guidance_queue import GuidanceQueue
+from agent_on_call.web_tools import WebSearchTool
 from agent_on_call.workspace import (
     WorkspaceManager,
     inject_git_credentials,
@@ -47,6 +48,7 @@ class OrchestratorAgent(Agent):
         super().__init__(instructions=ORCHESTRATOR_INSTRUCTIONS)
         self.guidance_queue = GuidanceQueue()
         self._workspace = WorkspaceManager()
+        self._web = WebSearchTool()
         self._room = None
 
     def set_room(self, room) -> None:
@@ -74,18 +76,20 @@ class OrchestratorAgent(Agent):
             return
 
         action_id = f"action-{int(time.time() * 1000)}-{tool}"
-        message = json.dumps({
-            "type": "agent_action",
-            "action": {
-                "id": action_id,
-                "kind": kind,
-                "tool": tool,
-                "summary": summary,
-                "detail": detail,
-                "status": status,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            },
-        })
+        message = json.dumps(
+            {
+                "type": "agent_action",
+                "action": {
+                    "id": action_id,
+                    "kind": kind,
+                    "tool": tool,
+                    "summary": summary,
+                    "detail": detail,
+                    "status": status,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+            }
+        )
         try:
             await self._room.local_participant.publish_data(
                 message.encode(),
@@ -107,9 +111,7 @@ class OrchestratorAgent(Agent):
             return f"Failed to create workspace: {e}"
 
     @function_tool
-    async def exec_command(
-        self, context: RunContext, command: str, timeout: int = 30
-    ) -> str:
+    async def exec_command(self, context: RunContext, command: str, timeout: int = 30) -> str:
         """Execute a shell command in the active workspace. Use for: git, pip, pytest, ls, etc.
 
         Args:
@@ -125,27 +127,23 @@ class OrchestratorAgent(Agent):
                 "Consider writing to a script file and executing it."
             )
         await self._emit_action(
-            "executing", "exec_command",
+            "executing",
+            "exec_command",
             f"Running: {command[:80]}{'...' if len(command) > 80 else ''}",
             detail=command,
         )
         try:
-            exit_code, stdout, stderr = self._workspace.exec_command(
-                command, timeout=timeout
-            )
+            exit_code, stdout, stderr = self._workspace.exec_command(command, timeout=timeout)
             # Truncate very long output
             if len(stdout) > 2000:
                 stdout = stdout[:1000] + "\n...(truncated)...\n" + stdout[-500:]
             if len(stderr) > 1000:
                 stderr = stderr[:500] + "\n...(truncated)...\n" + stderr[-200:]
-            result = (
-                f"Exit code: {exit_code}\n\n"
-                f"Stdout:\n{stdout}\n\n"
-                f"Stderr:\n{stderr}"
-            )
+            result = f"Exit code: {exit_code}\n\n" f"Stdout:\n{stdout}\n\n" f"Stderr:\n{stderr}"
             status = "completed" if exit_code == 0 else "failed"
             await self._emit_action(
-                "result", "exec_command",
+                "result",
+                "exec_command",
                 f"Command {'completed' if exit_code == 0 else 'failed'} (exit {exit_code})",
                 detail=stdout[:200] if stdout else stderr[:200],
                 status=status,
@@ -240,9 +238,7 @@ class OrchestratorAgent(Agent):
         cmd = " ".join(cmd_parts)
 
         try:
-            exit_code, stdout, stderr = self._workspace.exec_command(
-                cmd, timeout=120
-            )
+            exit_code, stdout, stderr = self._workspace.exec_command(cmd, timeout=120)
             # Sanitize output to remove credentials
             stdout = sanitize_git_output(stdout, token)
             stderr = sanitize_git_output(stderr, token)
@@ -250,10 +246,7 @@ class OrchestratorAgent(Agent):
             if exit_code != 0:
                 error_msg = stderr or stdout
                 if "authentication failed" in error_msg.lower():
-                    return (
-                        "Error: Authentication failed. "
-                        "Check GIT_TOKEN environment variable for private repos."
-                    )
+                    return "Error: Authentication failed. " "Check GIT_TOKEN environment variable for private repos."
                 return f"Clone failed (exit {exit_code}):\n{error_msg}"
 
             result = stdout or stderr or "Clone completed successfully."
@@ -271,9 +264,7 @@ class OrchestratorAgent(Agent):
         """Show the git working tree status in the workspace."""
         await self._emit_action("tool_call", "git_status", "Checking git status")
         try:
-            exit_code, stdout, stderr = self._workspace.exec_command(
-                "git status"
-            )
+            exit_code, stdout, stderr = self._workspace.exec_command("git status")
             if exit_code != 0:
                 await self._emit_action("result", "git_status", "git status failed", status="failed")
                 return f"git status failed:\n{stderr or stdout}"
@@ -284,9 +275,7 @@ class OrchestratorAgent(Agent):
             return f"Error: {e}"
 
     @function_tool
-    async def git_commit(
-        self, context: RunContext, message: str, files: str = "."
-    ) -> str:
+    async def git_commit(self, context: RunContext, message: str, files: str = ".") -> str:
         """Stage files and commit with a message.
 
         Args:
@@ -299,9 +288,7 @@ class OrchestratorAgent(Agent):
         await self._emit_action("executing", "git_commit", f"Committing: {message[:60]}")
         try:
             # Stage files
-            exit_code, stdout, stderr = self._workspace.exec_command(
-                f"git add {files}"
-            )
+            exit_code, stdout, stderr = self._workspace.exec_command(f"git add {files}")
             if exit_code != 0:
                 await self._emit_action("result", "git_commit", "git add failed", status="failed")
                 return f"git add failed:\n{stderr or stdout}"
@@ -309,9 +296,7 @@ class OrchestratorAgent(Agent):
             # Commit
             # Escape single quotes in message
             safe_message = message.replace("'", "'\\''")
-            exit_code, stdout, stderr = self._workspace.exec_command(
-                f"git commit -m '{safe_message}'"
-            )
+            exit_code, stdout, stderr = self._workspace.exec_command(f"git commit -m '{safe_message}'")
             if exit_code != 0:
                 output = stdout or stderr
                 if "nothing to commit" in output.lower():
@@ -355,10 +340,7 @@ class OrchestratorAgent(Agent):
                 error_msg = stderr or stdout
                 if "authentication failed" in error_msg.lower():
                     await self._emit_action("result", "git_push", "Authentication failed", status="failed")
-                    return (
-                        "Error: Authentication failed. "
-                        "Check GIT_TOKEN environment variable."
-                    )
+                    return "Error: Authentication failed. " "Check GIT_TOKEN environment variable."
                 if "rejected" in error_msg.lower():
                     await self._emit_action("result", "git_push", "Push rejected", status="failed")
                     return (
@@ -375,3 +357,37 @@ class OrchestratorAgent(Agent):
         except RuntimeError as e:
             await self._emit_action("result", "git_push", f"Error: {e}", status="failed")
             return f"Error: {e}"
+
+    @function_tool
+    async def web_search(self, context: RunContext, query: str) -> str:
+        """Search the web for information. Returns top results with titles, URLs, and snippets.
+
+        Use this to find documentation, Stack Overflow answers, API references, or any web resource.
+
+        Args:
+            query: The search query string.
+        """
+        await self._emit_action("tool_call", "web_search", f"Searching: {query[:80]}")
+        result = await self._web.search(query)
+        status = "failed" if result.startswith("Error") else "completed"
+        await self._emit_action(
+            "result", "web_search", f"Search {'completed' if status == 'completed' else 'failed'}", status=status
+        )
+        return result
+
+    @function_tool
+    async def web_fetch(self, context: RunContext, url: str) -> str:
+        """Fetch a web page and return its text content. HTML is converted to plain text.
+
+        Use this after web_search to read a specific page in detail.
+
+        Args:
+            url: The full URL to fetch (must start with http:// or https://).
+        """
+        await self._emit_action("tool_call", "web_fetch", f"Fetching: {url[:80]}")
+        result = await self._web.fetch(url)
+        status = "failed" if result.startswith("Error") else "completed"
+        await self._emit_action(
+            "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}", status=status
+        )
+        return result
