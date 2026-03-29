@@ -239,6 +239,7 @@ function AgentInterface() {
               const updated = [...prev];
               updated[existingIdx] = {
                 ...updated[existingIdx],
+                command: msg.command || updated[existingIdx].command,
                 output: msg.output || "",
                 exitCode: msg.exitCode ?? 0,
                 status: msg.done
