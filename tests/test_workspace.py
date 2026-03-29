@@ -285,3 +285,126 @@ class TestWorkspaceManager:
 
             mgr._workspace_name = "my-project"
             assert mgr.get_active_workspace() == "my-project"
+
+
+class TestCleanWorkspace:
+    """Tests for clean workspace behavior (story #59)."""
+
+    def test_create_workspace_clean_default_removes_existing(self):
+        """Default clean=True should remove existing container and volume."""
+        from agent_on_call.workspace import WorkspaceManager
+
+        with patch("agent_on_call.workspace.docker") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.from_env.return_value = mock_client
+
+            # Existing container
+            mock_existing = MagicMock()
+            mock_client.containers.get.return_value = mock_existing
+
+            # Existing volume
+            mock_volume = MagicMock()
+            mock_client.volumes.get.return_value = mock_volume
+
+            # New container
+            mock_container = MagicMock()
+            mock_container.id = "new123"
+            mock_client.containers.run.return_value = mock_container
+
+            mgr = WorkspaceManager()
+            result = mgr.create_workspace("test-project")
+
+            assert result == "new123"
+            # Should have stopped and removed existing container
+            mock_existing.stop.assert_called_once()
+            mock_existing.remove.assert_called_once()
+            # Should have removed existing volume
+            mock_volume.remove.assert_called_once()
+
+    def test_create_workspace_clean_true_explicit(self):
+        """Explicit clean=True should remove existing container and volume."""
+        from agent_on_call.workspace import WorkspaceManager
+
+        with patch("agent_on_call.workspace.docker") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.from_env.return_value = mock_client
+
+            # No existing container
+            mock_docker.errors.NotFound = Exception
+            mock_client.containers.get.side_effect = Exception("not found")
+            mock_client.volumes.get.side_effect = Exception("not found")
+
+            mock_container = MagicMock()
+            mock_container.id = "fresh123"
+            mock_client.containers.run.return_value = mock_container
+
+            mgr = WorkspaceManager()
+            result = mgr.create_workspace("test-project", clean=True)
+
+            assert result == "fresh123"
+            mock_client.containers.run.assert_called_once()
+
+    def test_create_workspace_clean_false_reuses_running(self):
+        """clean=False should reuse an existing running container."""
+        from agent_on_call.workspace import WorkspaceManager
+
+        with patch("agent_on_call.workspace.docker") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.from_env.return_value = mock_client
+
+            mock_existing = MagicMock()
+            mock_existing.id = "existing123"
+            mock_existing.status = "running"
+            mock_client.containers.get.return_value = mock_existing
+
+            mgr = WorkspaceManager()
+            result = mgr.create_workspace("test-project", clean=False)
+
+            assert result == "existing123"
+            # Should NOT have created a new container
+            mock_client.containers.run.assert_not_called()
+            assert mgr._active_container == mock_existing
+            assert mgr._workspace_name == "test-project"
+
+    def test_create_workspace_clean_false_starts_stopped(self):
+        """clean=False should start an existing stopped container."""
+        from agent_on_call.workspace import WorkspaceManager
+
+        with patch("agent_on_call.workspace.docker") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.from_env.return_value = mock_client
+
+            mock_existing = MagicMock()
+            mock_existing.id = "stopped123"
+            mock_existing.status = "exited"
+            mock_client.containers.get.return_value = mock_existing
+
+            mgr = WorkspaceManager()
+            result = mgr.create_workspace("test-project", clean=False)
+
+            assert result == "stopped123"
+            mock_existing.start.assert_called_once()
+            mock_client.containers.run.assert_not_called()
+            assert mgr._active_container == mock_existing
+
+    def test_create_workspace_clean_false_creates_fresh_if_none(self):
+        """clean=False should create fresh if no existing container."""
+        from agent_on_call.workspace import WorkspaceManager
+        import docker as docker_lib
+
+        with patch("agent_on_call.workspace.docker") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.from_env.return_value = mock_client
+            mock_docker.errors.NotFound = docker_lib.errors.NotFound
+
+            mock_client.containers.get.side_effect = docker_lib.errors.NotFound("not found")
+
+            mock_container = MagicMock()
+            mock_container.id = "new456"
+            mock_client.containers.run.return_value = mock_container
+
+            mgr = WorkspaceManager()
+            result = mgr.create_workspace("test-project", clean=False)
+
+            assert result == "new456"
+            mock_client.containers.run.assert_called_once()
