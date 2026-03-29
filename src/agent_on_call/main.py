@@ -24,6 +24,7 @@ server = AgentServer()
 
 VALID_ANTHROPIC_MODELS = {
     "claude-haiku-4-5-20250514",
+    "claude-sonnet-4-20250514",
     "claude-sonnet-4-5-20250514",
     "claude-opus-4-20250514",
 }
@@ -349,6 +350,11 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     await session.start(room=ctx.room, agent=agent)
 
+    # When TTS is unavailable, disable audio output so the SDK doesn't
+    # attempt TTS inference (which raises RuntimeError for missing tts_node).
+    if not tts_available:
+        session.output.set_audio_enabled(False)
+
     # Set room reference for action event publishing
     agent.set_room(ctx.room)
 
@@ -392,8 +398,13 @@ async def orchestrator_session(ctx: agents.JobContext):
         )
         tts_disabled_at_runtime = True
 
-        # Remove TTS from the session so it switches to text-only
+        # Remove TTS from the session and disable audio output so the SDK
+        # doesn't attempt TTS inference (which raises RuntimeError).
         session._tts = None
+        try:
+            session.output.set_audio_enabled(False)
+        except Exception as e:
+            logger.warning("Failed to disable audio output: %s", e)
 
         # Update agent instructions to reflect text-only mode
         agent._raw_instructions = _build_verbosity_instructions(
