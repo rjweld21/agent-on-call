@@ -1,3 +1,4 @@
+# Build workspace image first: docker build -t aoc-workspace-dev ./workspace
 services:
   livekit:
     image: livekit/livekit-server:latest
