@@ -243,7 +243,11 @@ export default function TestPage() {
           token={connectionDetails.token}
           serverUrl={connectionDetails.url}
           connect={true}
-          audio={true}
+          audio={{
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }}
           style={{ height: "100%" }}
         >
           <AudioTest />
