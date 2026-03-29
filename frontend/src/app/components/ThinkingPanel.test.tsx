@@ -63,8 +63,11 @@ describe("ThinkingPanel", () => {
     expect(screen.getByText("git status")).toBeInTheDocument();
   });
 
-  it("shows detail when present", () => {
+  it("shows detail when expanded by clicking", () => {
     render(<ThinkingPanel activities={mockActivities} isAgentWorking={false} />);
+    // Detail is collapsed by default — click to expand
+    const toggle = screen.getByTestId("activity-detail-toggle");
+    fireEvent.click(toggle);
     expect(screen.getByText(/On branch main/)).toBeInTheDocument();
   });
 
@@ -107,5 +110,34 @@ describe("ThinkingPanel", () => {
     // Both items rendered
     expect(screen.getByText("thinking text")).toBeInTheDocument();
     expect(screen.getByText("exec text")).toBeInTheDocument();
+  });
+
+  it("renders system activity type with System prefix", () => {
+    render(
+      <ThinkingPanel
+        activities={[
+          { id: "sys1", type: "system", text: "Agent joined the call", timestamp: new Date() },
+        ]}
+        isAgentWorking={false}
+      />
+    );
+    expect(screen.getByText("[System]")).toBeInTheDocument();
+    expect(screen.getByText("Agent joined the call")).toBeInTheDocument();
+  });
+
+  it("renders system leave event", () => {
+    render(
+      <ThinkingPanel
+        activities={[
+          { id: "sys1", type: "system", text: "Agent joined the call", timestamp: new Date() },
+          { id: "sys2", type: "system", text: "Agent left the call", timestamp: new Date() },
+        ]}
+        isAgentWorking={false}
+      />
+    );
+    expect(screen.getByText("Agent joined the call")).toBeInTheDocument();
+    expect(screen.getByText("Agent left the call")).toBeInTheDocument();
+    const items = screen.getAllByTestId("activity-item");
+    expect(items).toHaveLength(2);
   });
 });

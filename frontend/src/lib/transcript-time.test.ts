@@ -97,7 +97,7 @@ describe("GROUPING_WINDOW_MS", () => {
 describe("groupTranscriptEntries", () => {
   const makeEntry = (
     id: string,
-    speaker: "user" | "agent" | "user-text",
+    speaker: "user" | "agent" | "user-text" | "system",
     text: string,
     timeMs: number,
   ) => ({
@@ -201,5 +201,39 @@ describe("groupTranscriptEntries", () => {
     expect(groups[0].text).toBe("hey there");
     expect(groups[1].text).toBe("hello friend");
     expect(groups[2].text).toBe("how are you");
+  });
+
+  it("never merges system messages with adjacent entries", () => {
+    const entries = [
+      makeEntry("a", "system", "[Agent joined the call]", 1000),
+      makeEntry("b", "system", "[Agent left the call]", 1500), // within window, same speaker
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].text).toBe("[Agent joined the call]");
+    expect(groups[1].text).toBe("[Agent left the call]");
+  });
+
+  it("keeps system messages separate from surrounding entries", () => {
+    const entries = [
+      makeEntry("a", "user", "hello", 1000),
+      makeEntry("b", "system", "[Agent joined the call]", 1500),
+      makeEntry("c", "agent", "Hi there!", 2000),
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(3);
+    expect(groups[0].speaker).toBe("user");
+    expect(groups[1].speaker).toBe("system");
+    expect(groups[2].speaker).toBe("agent");
+  });
+
+  it("system message has correct speaker type", () => {
+    const entries = [
+      makeEntry("a", "system", "[Agent joined the call]", 1000),
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].speaker).toBe("system");
+    expect(groups[0].text).toBe("[Agent joined the call]");
   });
 });

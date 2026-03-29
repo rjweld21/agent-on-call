@@ -12,7 +12,7 @@ import {
   useChat,
   useRoomContext,
 } from "@livekit/components-react";
-import { Track } from "livekit-client";
+import { Track, RemoteParticipant } from "livekit-client";
 import "@livekit/components-styles";
 import { useCallback, useState, useEffect, useRef, KeyboardEvent } from "react";
 import {
@@ -133,6 +133,7 @@ function AgentInterface() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [ttsBanner, setTtsBanner] = useState<{ reason: string } | null>(null);
+  const [systemMessages, setSystemMessages] = useState<TranscriptEntry[]>([]);
 
   // Sync settings changes to agent via data channel
   useSettingsSync(room);
@@ -186,6 +187,64 @@ function AgentInterface() {
     };
   }, [room]);
 
+  // Listen for agent join/leave events
+  useEffect(() => {
+    const handleParticipantConnected = (participant: RemoteParticipant) => {
+      if (!participant.isAgent) return;
+      const now = new Date();
+      const id = `system-join-${participant.identity}-${now.getTime()}`;
+      setSystemMessages((prev) => [
+        ...prev,
+        {
+          id,
+          speaker: "system" as const,
+          text: "[Agent joined the call]",
+          timestamp: now,
+        },
+      ]);
+      setActivities((prev) => [
+        ...prev,
+        {
+          id,
+          type: "system" as const,
+          text: "Agent joined the call",
+          timestamp: now,
+        },
+      ]);
+    };
+
+    const handleParticipantDisconnected = (participant: RemoteParticipant) => {
+      if (!participant.isAgent) return;
+      const now = new Date();
+      const id = `system-leave-${participant.identity}-${now.getTime()}`;
+      setSystemMessages((prev) => [
+        ...prev,
+        {
+          id,
+          speaker: "system" as const,
+          text: "[Agent left the call]",
+          timestamp: now,
+        },
+      ]);
+      setActivities((prev) => [
+        ...prev,
+        {
+          id,
+          type: "system" as const,
+          text: "Agent left the call",
+          timestamp: now,
+        },
+      ]);
+    };
+
+    room.on("participantConnected", handleParticipantConnected);
+    room.on("participantDisconnected", handleParticipantDisconnected);
+    return () => {
+      room.off("participantConnected", handleParticipantConnected);
+      room.off("participantDisconnected", handleParticipantDisconnected);
+    };
+  }, [room]);
+
   // Build a TrackReferenceOrPlaceholder for the local mic so useTrackTranscription works
   const micTrackRef = microphoneTrack
     ? { participant: localParticipant, publication: microphoneTrack, source: Track.Source.Microphone }
@@ -219,6 +278,7 @@ function AgentInterface() {
       text: msg.message,
       timestamp: new Date(msg.timestamp),
     })),
+    ...systemMessages,
   ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
   // Auto-scroll transcript to bottom whenever entries change
@@ -410,6 +470,26 @@ function AgentInterface() {
                         --- {gapText} ---
                       </div>
                     )}
+                    {group.speaker === "system" ? (
+                      <div
+                        data-testid="system-message"
+                        style={{
+                          padding: "0.3rem 0", fontSize: "0.75rem",
+                          borderBottom: i < grouped.length - 1 ? "1px solid #334155" : "none",
+                          textAlign: "center",
+                          fontStyle: "italic",
+                          color: "#64748b",
+                        }}
+                      >
+                        <span data-testid="transcript-timestamp" style={{
+                          color: "#475569", fontSize: "0.7rem", marginRight: "0.5rem",
+                          fontFamily: "monospace",
+                        }}>
+                          {formatLocalTime(group.timestamp)}
+                        </span>
+                        {group.text}
+                      </div>
+                    ) : (
                     <div style={{
                       padding: "0.3rem 0", fontSize: "0.85rem",
                       borderBottom: i < grouped.length - 1 ? "1px solid #334155" : "none",
@@ -432,6 +512,7 @@ function AgentInterface() {
                       </span>
                       <span style={{ color: "#cbd5e1" }}>{group.text}</span>
                     </div>
+                    )}
                   </div>
                 );
               });
