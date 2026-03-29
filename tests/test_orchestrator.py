@@ -48,9 +48,7 @@ class TestEmitAction:
 
             agent = OrchestratorAgent()
             mock_room = MagicMock()
-            mock_room.local_participant.publish_data = AsyncMock(
-                side_effect=RuntimeError("publish failed")
-            )
+            mock_room.local_participant.publish_data = AsyncMock(side_effect=RuntimeError("publish failed"))
             agent.set_room(mock_room)
 
             # Should not raise — error is caught and logged
@@ -136,9 +134,7 @@ class TestExecCommandTool:
 
             assert "Exit code: 0" in result
             assert "hello world" in result
-            mock_ws.exec_command.assert_called_once_with(
-                "echo hello world", timeout=30
-            )
+            mock_ws.exec_command.assert_called_once_with("echo hello world", timeout=30)
 
     @pytest.mark.asyncio
     async def test_exec_command_nonzero_exit(self):
@@ -160,9 +156,7 @@ class TestExecCommandTool:
     async def test_exec_command_timeout(self):
         with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
             mock_ws = MagicMock()
-            mock_ws.exec_command.side_effect = TimeoutError(
-                "Command timed out after 5s"
-            )
+            mock_ws.exec_command.side_effect = TimeoutError("Command timed out after 5s")
             MockWS.return_value = mock_ws
 
             from agent_on_call.orchestrator import OrchestratorAgent
@@ -212,9 +206,7 @@ class TestExecCommandTool:
     async def test_exec_command_no_workspace(self):
         with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
             mock_ws = MagicMock()
-            mock_ws.exec_command.side_effect = RuntimeError(
-                "No active workspace. Create one first."
-            )
+            mock_ws.exec_command.side_effect = RuntimeError("No active workspace. Create one first.")
             MockWS.return_value = mock_ws
 
             from agent_on_call.orchestrator import OrchestratorAgent
@@ -238,9 +230,7 @@ class TestExecCommandTool:
             ctx = MagicMock()
             await agent.exec_command(ctx, command="pip install", timeout=120)
 
-            mock_ws.exec_command.assert_called_once_with(
-                "pip install", timeout=120
-            )
+            mock_ws.exec_command.assert_called_once_with("pip install", timeout=120)
 
     @pytest.mark.asyncio
     async def test_exec_command_truncates_long_output(self):
@@ -276,9 +266,7 @@ class TestGitCloneTool:
 
             agent = OrchestratorAgent()
             ctx = MagicMock()
-            result = await agent.git_clone(
-                ctx, repo_url="https://github.com/user/repo.git"
-            )
+            result = await agent.git_clone(ctx, repo_url="https://github.com/user/repo.git")
 
             assert "cloning" in result.lower() or "done" in result.lower()
             call_cmd = mock_ws.exec_command.call_args[0][0]
@@ -296,9 +284,7 @@ class TestGitCloneTool:
 
                 agent = OrchestratorAgent()
                 ctx = MagicMock()
-                result = await agent.git_clone(
-                    ctx, repo_url="https://github.com/user/repo.git"
-                )
+                result = await agent.git_clone(ctx, repo_url="https://github.com/user/repo.git")
 
                 # Token should be in the command sent to exec
                 call_cmd = mock_ws.exec_command.call_args[0][0]
@@ -372,9 +358,7 @@ class TestGitCloneTool:
 
             agent = OrchestratorAgent()
             ctx = MagicMock()
-            result = await agent.git_clone(
-                ctx, repo_url="https://github.com/user/private-repo.git"
-            )
+            result = await agent.git_clone(ctx, repo_url="https://github.com/user/private-repo.git")
 
             assert "auth" in result.lower() or "failed" in result.lower()
 
@@ -389,9 +373,7 @@ class TestGitCloneTool:
 
             agent = OrchestratorAgent()
             ctx = MagicMock()
-            await agent.git_clone(
-                ctx, repo_url="https://github.com/user/repo.git"
-            )
+            await agent.git_clone(ctx, repo_url="https://github.com/user/repo.git")
 
             call_kwargs = mock_ws.exec_command.call_args
             assert call_kwargs[1].get("timeout", 30) >= 120
@@ -424,9 +406,7 @@ class TestGitStatusTool:
     async def test_git_status_no_workspace(self):
         with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
             mock_ws = MagicMock()
-            mock_ws.exec_command.side_effect = RuntimeError(
-                "No active workspace. Create one first."
-            )
+            mock_ws.exec_command.side_effect = RuntimeError("No active workspace. Create one first.")
             MockWS.return_value = mock_ws
 
             from agent_on_call.orchestrator import OrchestratorAgent
@@ -476,9 +456,7 @@ class TestGitCommitTool:
 
             agent = OrchestratorAgent()
             ctx = MagicMock()
-            await agent.git_commit(
-                ctx, message="Update readme", files="README.md src/main.py"
-            )
+            await agent.git_commit(ctx, message="Update readme", files="README.md src/main.py")
 
             calls = mock_ws.exec_command.call_args_list
             assert "README.md src/main.py" in calls[0][0][0]
@@ -609,3 +587,50 @@ class TestGitPushTool:
             result = await agent.git_push(ctx)
 
             assert "rejected" in result.lower() or "failed" in result.lower()
+
+
+class TestWebSearchTool:
+    def test_orchestrator_has_web_search_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            assert hasattr(agent, "web_search")
+
+    def test_orchestrator_has_web_fetch_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            assert hasattr(agent, "web_fetch")
+
+    def test_orchestrator_has_web_tool_instance(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            assert hasattr(agent, "_web")
+
+    @pytest.mark.asyncio
+    async def test_web_search_delegates_to_web_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.search = AsyncMock(return_value="1. **Result**\n   URL: https://example.com\n   Snippet")
+            ctx = MagicMock()
+            result = await agent.web_search(ctx, query="test query")
+            agent._web.search.assert_awaited_once_with("test query")
+            assert "Result" in result
+
+    @pytest.mark.asyncio
+    async def test_web_fetch_delegates_to_web_tool(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.fetch = AsyncMock(return_value="Page content here")
+            ctx = MagicMock()
+            result = await agent.web_fetch(ctx, url="https://example.com")
+            agent._web.fetch.assert_awaited_once_with("https://example.com")
+            assert "Page content" in result
