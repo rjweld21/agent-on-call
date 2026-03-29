@@ -142,12 +142,9 @@ function AgentInterface() {
 
   // Listen for TTS status messages from the agent
   useEffect(() => {
-    const handleDataReceived = (payload: unknown) => {
+    const handleDataReceived = (payload: Uint8Array) => {
       try {
-        // LiveKit data packet — extract data bytes
-        const packet = payload as { data?: Uint8Array };
-        if (!packet?.data) return;
-        const text = new TextDecoder().decode(packet.data);
+        const text = new TextDecoder().decode(payload);
         const msg = JSON.parse(text);
         if (msg?.type === "tts_status") {
           if (msg.available === false && msg.reason) {
