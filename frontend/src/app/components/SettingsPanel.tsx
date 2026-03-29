@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback } from "react";
+import { ModelSelector } from "./ModelSelector";
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -9,7 +10,7 @@ interface SettingsPanelProps {
 
 const SECTIONS = [
   { id: "general", title: "General", description: "General preferences" },
-  { id: "model", title: "Model", description: "AI model configuration" },
+  { id: "model", title: "Model", description: "AI model configuration", component: ModelSelector },
   { id: "voice", title: "Voice", description: "Voice and turn-taking controls" },
 ];
 
@@ -103,53 +104,60 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             padding: "1rem 1.25rem",
           }}
         >
-          {SECTIONS.map((section) => (
-            <div
-              key={section.id}
-              style={{
-                marginBottom: "1.5rem",
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: "0.95rem",
-                  fontWeight: 600,
-                  color: "#e2e8f0",
-                  margin: "0 0 0.25rem 0",
-                }}
-              >
-                {section.title}
-              </h3>
-              <p
-                style={{
-                  fontSize: "0.75rem",
-                  color: "#64748b",
-                  margin: "0 0 0.75rem 0",
-                }}
-              >
-                {section.description}
-              </p>
+          {SECTIONS.map((section) => {
+            const SectionComponent = section.component;
+            return (
               <div
+                key={section.id}
                 style={{
-                  padding: "0.75rem",
-                  background: "#0f172a",
-                  borderRadius: "6px",
-                  border: "1px solid #334155",
+                  marginBottom: "1.5rem",
                 }}
               >
-                <p
+                <h3
                   style={{
-                    margin: 0,
-                    color: "#475569",
-                    fontSize: "0.8rem",
-                    fontStyle: "italic",
+                    fontSize: "0.95rem",
+                    fontWeight: 600,
+                    color: "#e2e8f0",
+                    margin: "0 0 0.25rem 0",
                   }}
                 >
-                  No settings available yet.
+                  {section.title}
+                </h3>
+                <p
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "#64748b",
+                    margin: "0 0 0.75rem 0",
+                  }}
+                >
+                  {section.description}
                 </p>
+                <div
+                  style={{
+                    padding: "0.75rem",
+                    background: "#0f172a",
+                    borderRadius: "6px",
+                    border: "1px solid #334155",
+                  }}
+                >
+                  {SectionComponent ? (
+                    <SectionComponent />
+                  ) : (
+                    <p
+                      style={{
+                        margin: 0,
+                        color: "#475569",
+                        fontSize: "0.8rem",
+                        fontStyle: "italic",
+                      }}
+                    >
+                      No settings available yet.
+                    </p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </>
