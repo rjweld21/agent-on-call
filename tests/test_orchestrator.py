@@ -1,5 +1,6 @@
 """Tests for OrchestratorAgent."""
 
+import os
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -180,3 +181,354 @@ class TestExecCommandTool:
 
             assert "truncated" in result.lower()
             assert len(result) < 3000
+
+
+class TestGitCloneTool:
+    @pytest.mark.asyncio
+    async def test_git_clone_success(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                0,
+                "Cloning into 'repo'...\ndone.",
+                "",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_clone(
+                ctx, repo_url="https://github.com/user/repo.git"
+            )
+
+            assert "cloning" in result.lower() or "done" in result.lower()
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "git clone" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_clone_injects_credentials(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "Cloning...", "")
+            MockWS.return_value = mock_ws
+
+            with patch.dict(os.environ, {"GIT_TOKEN": "ghp_secret123"}):
+                from agent_on_call.orchestrator import OrchestratorAgent
+
+                agent = OrchestratorAgent()
+                ctx = MagicMock()
+                result = await agent.git_clone(
+                    ctx, repo_url="https://github.com/user/repo.git"
+                )
+
+                # Token should be in the command sent to exec
+                call_cmd = mock_ws.exec_command.call_args[0][0]
+                assert "ghp_secret123@github.com" in call_cmd
+                # But NOT in the result returned to the LLM
+                assert "ghp_secret123" not in result
+
+    @pytest.mark.asyncio
+    async def test_git_clone_with_branch(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "Cloning...", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            await agent.git_clone(
+                ctx,
+                repo_url="https://github.com/user/repo.git",
+                branch="develop",
+            )
+
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "-b develop" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_clone_with_path(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "Cloning...", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            await agent.git_clone(
+                ctx,
+                repo_url="https://github.com/user/repo.git",
+                path="/workspace/myrepo",
+            )
+
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "/workspace/myrepo" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_clone_empty_url(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_clone(ctx, repo_url="")
+
+            assert "error" in result.lower() or "empty" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_clone_auth_failure(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                128,
+                "",
+                "fatal: Authentication failed for 'https://github.com/user/private-repo.git'",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_clone(
+                ctx, repo_url="https://github.com/user/private-repo.git"
+            )
+
+            assert "auth" in result.lower() or "failed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_clone_uses_long_timeout(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "Cloning...", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            await agent.git_clone(
+                ctx, repo_url="https://github.com/user/repo.git"
+            )
+
+            call_kwargs = mock_ws.exec_command.call_args
+            assert call_kwargs[1].get("timeout", 30) >= 120
+
+
+class TestGitStatusTool:
+    @pytest.mark.asyncio
+    async def test_git_status_success(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                0,
+                "On branch main\nnothing to commit, working tree clean",
+                "",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_status(ctx)
+
+            assert "On branch main" in result
+            mock_ws.exec_command.assert_called_once()
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "git status" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_status_no_workspace(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.side_effect = RuntimeError(
+                "No active workspace. Create one first."
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_status(ctx)
+
+            assert "No active workspace" in result
+
+
+class TestGitCommitTool:
+    @pytest.mark.asyncio
+    async def test_git_commit_success(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            # First call: git add, second call: git commit
+            mock_ws.exec_command.side_effect = [
+                (0, "", ""),
+                (0, "[main abc1234] Initial commit\n 1 file changed", ""),
+            ]
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_commit(ctx, message="Initial commit")
+
+            assert "commit" in result.lower()
+            calls = mock_ws.exec_command.call_args_list
+            assert "git add" in calls[0][0][0]
+            assert "git commit" in calls[1][0][0]
+            assert "Initial commit" in calls[1][0][0]
+
+    @pytest.mark.asyncio
+    async def test_git_commit_specific_files(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.side_effect = [
+                (0, "", ""),
+                (0, "[main abc1234] Update readme", ""),
+            ]
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            await agent.git_commit(
+                ctx, message="Update readme", files="README.md src/main.py"
+            )
+
+            calls = mock_ws.exec_command.call_args_list
+            assert "README.md src/main.py" in calls[0][0][0]
+
+    @pytest.mark.asyncio
+    async def test_git_commit_nothing_to_commit(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.side_effect = [
+                (0, "", ""),
+                (1, "nothing to commit, working tree clean", ""),
+            ]
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_commit(ctx, message="Empty commit")
+
+            assert "nothing to commit" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_commit_empty_message(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_commit(ctx, message="")
+
+            assert "error" in result.lower() or "empty" in result.lower()
+
+
+class TestGitPushTool:
+    @pytest.mark.asyncio
+    async def test_git_push_success(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                0,
+                "",
+                "To https://github.com/user/repo.git\n   abc1234..def5678  main -> main",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_push(ctx)
+
+            assert "push" in result.lower() or "main" in result.lower()
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "git push" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_push_custom_remote_branch(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "", "Everything up-to-date")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            await agent.git_push(ctx, remote="upstream", branch="develop")
+
+            call_cmd = mock_ws.exec_command.call_args[0][0]
+            assert "upstream" in call_cmd
+            assert "develop" in call_cmd
+
+    @pytest.mark.asyncio
+    async def test_git_push_sanitizes_output(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                0,
+                "",
+                "To https://ghp_secret@github.com/user/repo.git\n   pushed",
+            )
+            MockWS.return_value = mock_ws
+
+            with patch.dict(os.environ, {"GIT_TOKEN": "ghp_secret"}):
+                from agent_on_call.orchestrator import OrchestratorAgent
+
+                agent = OrchestratorAgent()
+                ctx = MagicMock()
+                result = await agent.git_push(ctx)
+
+                assert "ghp_secret" not in result
+
+    @pytest.mark.asyncio
+    async def test_git_push_auth_failure(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                128,
+                "",
+                "fatal: Authentication failed",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_push(ctx)
+
+            assert "auth" in result.lower() or "failed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_git_push_rejected(self):
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (
+                1,
+                "",
+                "! [rejected]        main -> main (non-fast-forward)",
+            )
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            ctx = MagicMock()
+            result = await agent.git_push(ctx)
+
+            assert "rejected" in result.lower() or "failed" in result.lower()

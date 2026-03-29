@@ -1,10 +1,16 @@
 """Orchestrator Agent — voice interface and sub-agent coordination."""
 
+import os
+
 from livekit.agents import Agent, RunContext
 from livekit.agents.llm import function_tool
 
 from agent_on_call.guidance_queue import GuidanceQueue
-from agent_on_call.workspace import WorkspaceManager
+from agent_on_call.workspace import (
+    WorkspaceManager,
+    inject_git_credentials,
+    sanitize_git_output,
+)
 
 ORCHESTRATOR_INSTRUCTIONS = """You are the Agent On Call orchestrator — a helpful AI assistant \
 on a voice call with the user. Your display name is "Orchestrator".
@@ -118,3 +124,155 @@ class OrchestratorAgent(Agent):
         if active:
             lines.append(f"\nActive workspace: {active}")
         return "\n".join(lines)
+
+    def _get_git_token(self) -> str | None:
+        """Get the git token from environment variables."""
+        return os.environ.get("GIT_TOKEN")
+
+    @function_tool
+    async def git_clone(
+        self,
+        context: RunContext,
+        repo_url: str,
+        branch: str = "",
+        path: str = "",
+    ) -> str:
+        """Clone a git repository into the workspace.
+
+        Args:
+            repo_url: The repository URL (HTTPS or SSH).
+            branch: Optional branch to clone (default: repo default branch).
+            path: Optional target directory path (default: auto from repo name).
+        """
+        if not repo_url or not repo_url.strip():
+            return "Error: Repository URL cannot be empty."
+
+        token = self._get_git_token()
+        credentialed_url = inject_git_credentials(repo_url, token)
+
+        cmd_parts = ["git clone"]
+        if branch:
+            cmd_parts.append(f"-b {branch}")
+        cmd_parts.append(credentialed_url)
+        if path:
+            cmd_parts.append(path)
+
+        cmd = " ".join(cmd_parts)
+
+        try:
+            exit_code, stdout, stderr = self._workspace.exec_command(
+                cmd, timeout=120
+            )
+            # Sanitize output to remove credentials
+            stdout = sanitize_git_output(stdout, token)
+            stderr = sanitize_git_output(stderr, token)
+
+            if exit_code != 0:
+                error_msg = stderr or stdout
+                if "authentication failed" in error_msg.lower():
+                    return (
+                        "Error: Authentication failed. "
+                        "Check GIT_TOKEN environment variable for private repos."
+                    )
+                return f"Clone failed (exit {exit_code}):\n{error_msg}"
+
+            result = stdout or stderr or "Clone completed successfully."
+            return sanitize_git_output(result, token)
+        except TimeoutError:
+            return "Error: Clone timed out after 120s. The repository may be very large."
+        except RuntimeError as e:
+            return f"Error: {e}"
+
+    @function_tool
+    async def git_status(self, context: RunContext) -> str:
+        """Show the git working tree status in the workspace."""
+        try:
+            exit_code, stdout, stderr = self._workspace.exec_command(
+                "git status"
+            )
+            if exit_code != 0:
+                return f"git status failed:\n{stderr or stdout}"
+            return stdout
+        except RuntimeError as e:
+            return f"Error: {e}"
+
+    @function_tool
+    async def git_commit(
+        self, context: RunContext, message: str, files: str = "."
+    ) -> str:
+        """Stage files and commit with a message.
+
+        Args:
+            message: The commit message.
+            files: Space-separated file paths to stage (default: '.' for all changes).
+        """
+        if not message or not message.strip():
+            return "Error: Commit message cannot be empty."
+
+        try:
+            # Stage files
+            exit_code, stdout, stderr = self._workspace.exec_command(
+                f"git add {files}"
+            )
+            if exit_code != 0:
+                return f"git add failed:\n{stderr or stdout}"
+
+            # Commit
+            # Escape single quotes in message
+            safe_message = message.replace("'", "'\\''")
+            exit_code, stdout, stderr = self._workspace.exec_command(
+                f"git commit -m '{safe_message}'"
+            )
+            if exit_code != 0:
+                output = stdout or stderr
+                if "nothing to commit" in output.lower():
+                    return "Nothing to commit — working tree is clean."
+                return f"git commit failed:\n{output}"
+
+            return f"Committed successfully:\n{stdout}"
+        except RuntimeError as e:
+            return f"Error: {e}"
+
+    @function_tool
+    async def git_push(
+        self,
+        context: RunContext,
+        remote: str = "origin",
+        branch: str = "",
+    ) -> str:
+        """Push commits to a remote repository.
+
+        Args:
+            remote: The remote name (default: 'origin').
+            branch: The branch to push (default: current branch).
+        """
+        token = self._get_git_token()
+
+        cmd = f"git push {remote}"
+        if branch:
+            cmd += f" {branch}"
+
+        try:
+            exit_code, stdout, stderr = self._workspace.exec_command(cmd)
+            stdout = sanitize_git_output(stdout, token)
+            stderr = sanitize_git_output(stderr, token)
+
+            if exit_code != 0:
+                error_msg = stderr or stdout
+                if "authentication failed" in error_msg.lower():
+                    return (
+                        "Error: Authentication failed. "
+                        "Check GIT_TOKEN environment variable."
+                    )
+                if "rejected" in error_msg.lower():
+                    return (
+                        f"Push rejected:\n{error_msg}\n\n"
+                        "The remote has changes you don't have locally. "
+                        "Try pulling first."
+                    )
+                return f"Push failed (exit {exit_code}):\n{error_msg}"
+
+            result = stderr or stdout or "Push completed successfully."
+            return sanitize_git_output(result, token)
+        except RuntimeError as e:
+            return f"Error: {e}"
