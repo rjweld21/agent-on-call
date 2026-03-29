@@ -14,16 +14,14 @@ import {
 import { Track } from "livekit-client";
 import "@livekit/components-styles";
 import { useCallback, useState, useEffect, useRef, KeyboardEvent } from "react";
-import { formatElapsedTime, detectGap, getSessionStartTime } from "@/lib/transcript-time";
+import {
+  formatLocalTime,
+  detectGap,
+  groupTranscriptEntries,
+  type TranscriptEntry,
+} from "@/lib/transcript-time";
 import { SettingsProvider } from "@/lib/settings-context";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
-
-interface TranscriptEntry {
-  id: string;
-  speaker: "user" | "agent" | "user-text";
-  text: string;
-  timestamp: Date;
-}
 
 function MicMonitor() {
   const { microphoneTrack } = useLocalParticipant();
@@ -286,14 +284,11 @@ function AgentInterface() {
             </p>
           ) : (
             (() => {
-              const sessionStart = getSessionStartTime(transcript);
-              return transcript.map((entry, i) => {
-                const gapText = i > 0 ? detectGap(transcript[i - 1].timestamp, entry.timestamp) : null;
-                const elapsedMs = sessionStart
-                  ? entry.timestamp.getTime() - sessionStart.getTime()
-                  : 0;
+              const grouped = groupTranscriptEntries(transcript);
+              return grouped.map((group, i) => {
+                const gapText = i > 0 ? detectGap(grouped[i - 1].lastTimestamp, group.timestamp) : null;
                 return (
-                  <div key={entry.id}>
+                  <div key={group.ids.join("-")}>
                     {gapText && (
                       <div data-testid="gap-indicator" style={{
                         textAlign: "center", color: "#64748b", fontSize: "0.7rem",
@@ -304,25 +299,25 @@ function AgentInterface() {
                     )}
                     <div style={{
                       padding: "0.3rem 0", fontSize: "0.85rem",
-                      borderBottom: i < transcript.length - 1 ? "1px solid #334155" : "none",
+                      borderBottom: i < grouped.length - 1 ? "1px solid #334155" : "none",
                     }}>
                       <span data-testid="transcript-timestamp" style={{
                         color: "#475569", fontSize: "0.7rem", marginRight: "0.5rem",
                         fontFamily: "monospace",
                       }}>
-                        {formatElapsedTime(elapsedMs)}
+                        {formatLocalTime(group.timestamp)}
                       </span>
                       <span style={{
-                        color: entry.speaker === "agent" ? "#fcd34d"
-                          : entry.speaker === "user-text" ? "#a78bfa"
+                        color: group.speaker === "agent" ? "#fcd34d"
+                          : group.speaker === "user-text" ? "#a78bfa"
                           : "#60a5fa",
                         fontWeight: "bold", marginRight: "0.5rem",
                       }}>
-                        {entry.speaker === "agent" ? "Agent:"
-                          : entry.speaker === "user-text" ? "You (text):"
+                        {group.speaker === "agent" ? "Agent:"
+                          : group.speaker === "user-text" ? "You (text):"
                           : "You:"}
                       </span>
-                      <span style={{ color: "#cbd5e1" }}>{entry.text}</span>
+                      <span style={{ color: "#cbd5e1" }}>{group.text}</span>
                     </div>
                   </div>
                 );
@@ -415,7 +410,7 @@ export default function Home() {
             audio={true}
             onDisconnected={disconnect}
             style={{ height: "100%" }}
-        >
+          >
             <AgentInterface />
             <RoomAudioRenderer />
           </LiveKitRoom>

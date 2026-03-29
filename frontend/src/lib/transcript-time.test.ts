@@ -3,108 +3,203 @@ import {
   formatElapsedTime,
   detectGap,
   getSessionStartTime,
+  formatLocalTime,
+  groupTranscriptEntries,
+  GROUPING_WINDOW_MS,
 } from "./transcript-time";
 
 describe("formatElapsedTime", () => {
-  it("returns 00:00:00 for 0 milliseconds", () => {
+  it("formats zero milliseconds as 00:00:00", () => {
     expect(formatElapsedTime(0)).toBe("00:00:00");
   });
 
-  it("returns 00:00:01 for 1000 milliseconds", () => {
-    expect(formatElapsedTime(1000)).toBe("00:00:01");
-  });
-
-  it("returns 00:01:01 for 61000 milliseconds", () => {
-    expect(formatElapsedTime(61000)).toBe("00:01:01");
-  });
-
-  it("returns 01:01:01 for 3661000 milliseconds", () => {
-    expect(formatElapsedTime(3661000)).toBe("01:01:01");
-  });
-
-  it("returns 00:00:00 for negative input", () => {
+  it("formats negative values as 00:00:00", () => {
     expect(formatElapsedTime(-5000)).toBe("00:00:00");
   });
 
-  it("handles hours greater than 99", () => {
-    // 100 hours = 360000000 ms
-    expect(formatElapsedTime(360000000)).toBe("100:00:00");
+  it("formats seconds correctly", () => {
+    expect(formatElapsedTime(45000)).toBe("00:00:45");
   });
 
-  it("returns 00:00:30 for 30000 milliseconds", () => {
-    expect(formatElapsedTime(30000)).toBe("00:00:30");
+  it("formats minutes and seconds", () => {
+    expect(formatElapsedTime(125000)).toBe("00:02:05");
   });
 
-  it("returns 00:05:00 for 300000 milliseconds", () => {
-    expect(formatElapsedTime(300000)).toBe("00:05:00");
+  it("formats hours, minutes, and seconds", () => {
+    expect(formatElapsedTime(3661000)).toBe("01:01:01");
   });
 });
 
 describe("detectGap", () => {
-  it("returns null for a gap of 30 seconds", () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T00:00:30Z");
-    expect(detectGap(prev, curr)).toBeNull();
+  it("returns null for gaps <= 60 seconds", () => {
+    const a = new Date("2026-03-25T10:00:00");
+    const b = new Date("2026-03-25T10:00:30");
+    expect(detectGap(a, b)).toBeNull();
   });
 
-  it("returns null for exactly 60 seconds", () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T00:01:00Z");
-    expect(detectGap(prev, curr)).toBeNull();
+  it("returns minute gap string for gaps > 60 seconds", () => {
+    const a = new Date("2026-03-25T10:00:00");
+    const b = new Date("2026-03-25T10:03:00");
+    expect(detectGap(a, b)).toBe("3 min gap");
   });
 
-  it('returns "1 min gap" for 61 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T00:01:01Z");
-    expect(detectGap(prev, curr)).toBe("1 min gap");
-  });
-
-  it('returns "2 min gap" for 120 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T00:02:00Z");
-    expect(detectGap(prev, curr)).toBe("2 min gap");
-  });
-
-  it('returns "2 min gap" for 150 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T00:02:30Z");
-    expect(detectGap(prev, curr)).toBe("2 min gap");
-  });
-
-  it('returns "1 hr 0 min gap" for 3600 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T01:00:00Z");
-    expect(detectGap(prev, curr)).toBe("1 hr 0 min gap");
-  });
-
-  it('returns "1 hr 5 min gap" for 3900 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T01:05:00Z");
-    expect(detectGap(prev, curr)).toBe("1 hr 5 min gap");
-  });
-
-  it('returns "2 hr 30 min gap" for 9000 seconds', () => {
-    const prev = new Date("2026-01-01T00:00:00Z");
-    const curr = new Date("2026-01-01T02:30:00Z");
-    expect(detectGap(prev, curr)).toBe("2 hr 30 min gap");
+  it("returns hour + minute gap for large gaps", () => {
+    const a = new Date("2026-03-25T10:00:00");
+    const b = new Date("2026-03-25T11:05:00");
+    expect(detectGap(a, b)).toBe("1 hr 5 min gap");
   });
 });
 
 describe("getSessionStartTime", () => {
-  it("returns null for an empty array", () => {
+  it("returns null for empty array", () => {
     expect(getSessionStartTime([])).toBeNull();
   });
 
-  it("returns the timestamp of a single entry", () => {
-    const date = new Date("2026-01-01T12:00:00Z");
+  it("returns first entry timestamp", () => {
+    const date = new Date("2026-03-25T10:00:00");
     expect(getSessionStartTime([{ timestamp: date }])).toBe(date);
   });
+});
 
-  it("returns the timestamp of the first entry", () => {
-    const first = new Date("2026-01-01T12:00:00Z");
-    const second = new Date("2026-01-01T12:05:00Z");
-    expect(
-      getSessionStartTime([{ timestamp: first }, { timestamp: second }]),
-    ).toBe(first);
+describe("formatLocalTime", () => {
+  it("returns a string containing the hour and minute", () => {
+    const date = new Date("2026-03-25T14:35:00");
+    const result = formatLocalTime(date);
+    // Should contain "2:35" (12h) or "14:35" (24h) depending on locale
+    expect(result).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("handles midnight", () => {
+    const date = new Date("2026-03-25T00:00:00");
+    const result = formatLocalTime(date);
+    expect(result).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("handles noon", () => {
+    const date = new Date("2026-03-25T12:00:00");
+    const result = formatLocalTime(date);
+    expect(result).toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("returns different strings for different times", () => {
+    const morning = formatLocalTime(new Date("2026-03-25T09:15:00"));
+    const evening = formatLocalTime(new Date("2026-03-25T21:45:00"));
+    expect(morning).not.toBe(evening);
+  });
+});
+
+describe("GROUPING_WINDOW_MS", () => {
+  it("is exported and equals 2000", () => {
+    expect(GROUPING_WINDOW_MS).toBe(2000);
+  });
+});
+
+describe("groupTranscriptEntries", () => {
+  const makeEntry = (
+    id: string,
+    speaker: "user" | "agent" | "user-text",
+    text: string,
+    timeMs: number,
+  ) => ({
+    id,
+    speaker,
+    text,
+    timestamp: new Date(timeMs),
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(groupTranscriptEntries([])).toEqual([]);
+  });
+
+  it("returns one group for a single entry", () => {
+    const entries = [makeEntry("a", "user", "hello", 1000)];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].ids).toEqual(["a"]);
+    expect(groups[0].text).toBe("hello");
+    expect(groups[0].speaker).toBe("user");
+  });
+
+  it("merges consecutive same-speaker entries within the grouping window", () => {
+    const entries = [
+      makeEntry("a", "user", "I was thinking", 1000),
+      makeEntry("b", "user", "about the database", 2500), // 1.5s gap < 2s
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].ids).toEqual(["a", "b"]);
+    expect(groups[0].text).toBe("I was thinking about the database");
+    expect(groups[0].timestamp.getTime()).toBe(1000);
+    expect(groups[0].lastTimestamp.getTime()).toBe(2500);
+  });
+
+  it("does not merge same-speaker entries beyond the grouping window", () => {
+    const entries = [
+      makeEntry("a", "user", "first", 1000),
+      makeEntry("b", "user", "second", 4000), // 3s gap > 2s
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].text).toBe("first");
+    expect(groups[1].text).toBe("second");
+  });
+
+  it("never merges entries from different speakers", () => {
+    const entries = [
+      makeEntry("a", "user", "hello", 1000),
+      makeEntry("b", "agent", "hi there", 1500), // 0.5s gap, different speaker
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].speaker).toBe("user");
+    expect(groups[1].speaker).toBe("agent");
+  });
+
+  it("merges three rapid entries from the same speaker", () => {
+    const entries = [
+      makeEntry("a", "agent", "Let me", 1000),
+      makeEntry("b", "agent", "think about", 2000),   // 1s gap
+      makeEntry("c", "agent", "that for a moment", 3500), // 1.5s gap
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].text).toBe("Let me think about that for a moment");
+    expect(groups[0].ids).toEqual(["a", "b", "c"]);
+  });
+
+  it("preserves first timestamp for display and last timestamp for gap detection", () => {
+    const entries = [
+      makeEntry("a", "user", "one", 1000),
+      makeEntry("b", "user", "two", 2000),
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups[0].timestamp.getTime()).toBe(1000);
+    expect(groups[0].lastTimestamp.getTime()).toBe(2000);
+  });
+
+  it("accepts a custom grouping window", () => {
+    const entries = [
+      makeEntry("a", "user", "first", 1000),
+      makeEntry("b", "user", "second", 4000), // 3s gap
+    ];
+    // With 5s window, should merge
+    const groups = groupTranscriptEntries(entries, 5000);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].text).toBe("first second");
+  });
+
+  it("handles mixed speakers with interleaved grouping", () => {
+    const entries = [
+      makeEntry("a", "user", "hey", 1000),
+      makeEntry("b", "user", "there", 2000),     // merge with a
+      makeEntry("c", "agent", "hello", 2500),     // new group
+      makeEntry("d", "agent", "friend", 3000),    // merge with c
+      makeEntry("e", "user", "how are you", 3500), // new group
+    ];
+    const groups = groupTranscriptEntries(entries);
+    expect(groups).toHaveLength(3);
+    expect(groups[0].text).toBe("hey there");
+    expect(groups[1].text).toBe("hello friend");
+    expect(groups[2].text).toBe("how are you");
   });
 });

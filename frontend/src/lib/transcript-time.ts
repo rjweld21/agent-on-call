@@ -51,3 +51,72 @@ export function getSessionStartTime(
   if (entries.length === 0) return null;
   return entries[0].timestamp;
 }
+
+/**
+ * Format a Date as local wall-clock time (e.g., "2:35 PM" or "14:35").
+ * Respects the user's browser locale for 12h/24h format.
+ */
+export function formatLocalTime(date: Date): string {
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Default grouping window in milliseconds.
+ * Consecutive transcript entries from the same speaker within this window
+ * are merged into a single displayed message.
+ */
+export const GROUPING_WINDOW_MS = 2000;
+
+export interface TranscriptEntry {
+  id: string;
+  speaker: "user" | "agent" | "user-text";
+  text: string;
+  timestamp: Date;
+}
+
+export interface GroupedTranscriptEntry {
+  ids: string[];
+  speaker: "user" | "agent" | "user-text";
+  text: string;
+  timestamp: Date;
+  lastTimestamp: Date;
+}
+
+/**
+ * Group consecutive transcript entries from the same speaker when
+ * the time gap between them is below the given window.
+ */
+export function groupTranscriptEntries(
+  entries: TranscriptEntry[],
+  windowMs: number = GROUPING_WINDOW_MS,
+): GroupedTranscriptEntry[] {
+  if (entries.length === 0) return [];
+
+  const groups: GroupedTranscriptEntry[] = [];
+
+  for (const entry of entries) {
+    const last = groups[groups.length - 1];
+    if (
+      last &&
+      last.speaker === entry.speaker &&
+      entry.timestamp.getTime() - last.lastTimestamp.getTime() < windowMs
+    ) {
+      last.ids.push(entry.id);
+      last.text += " " + entry.text;
+      last.lastTimestamp = entry.timestamp;
+    } else {
+      groups.push({
+        ids: [entry.id],
+        speaker: entry.speaker,
+        text: entry.text,
+        timestamp: entry.timestamp,
+        lastTimestamp: entry.timestamp,
+      });
+    }
+  }
+
+  return groups;
+}
