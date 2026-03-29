@@ -1,12 +1,37 @@
 """Workspace container management via Docker SDK."""
 
 import concurrent.futures
+import re
 
 import docker
 from docker.models.containers import Container
 
 # Thread pool for running blocking Docker exec calls with timeout support
 _exec_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def inject_git_credentials(url: str, token: str | None) -> str:
+    """Inject a git token into an HTTPS URL for authentication.
+
+    SSH URLs (git@...) are returned unchanged.
+    If token is None or empty, the URL is returned unchanged.
+    """
+    if not token:
+        return url
+    if not url.startswith("https://"):
+        return url
+    # Insert token after https://
+    return re.sub(r"^https://", f"https://{token}@", url)
+
+
+def sanitize_git_output(output: str, token: str | None) -> str:
+    """Remove any occurrence of the git token from command output.
+
+    Prevents credential leakage in tool responses visible to the LLM.
+    """
+    if not token:
+        return output
+    return output.replace(token, "***")
 
 
 class WorkspaceManager:

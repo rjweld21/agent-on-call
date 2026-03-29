@@ -4,6 +4,80 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 
+class TestGitCredentialHelpers:
+    def test_inject_credentials_https_github(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "https://github.com/user/repo.git"
+        result = inject_git_credentials(url, "ghp_test123")
+        assert result == "https://ghp_test123@github.com/user/repo.git"
+
+    def test_inject_credentials_https_no_git_suffix(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "https://github.com/user/repo"
+        result = inject_git_credentials(url, "ghp_test123")
+        assert result == "https://ghp_test123@github.com/user/repo"
+
+    def test_inject_credentials_https_gitlab(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "https://gitlab.com/user/repo.git"
+        result = inject_git_credentials(url, "glpat_test123")
+        assert result == "https://glpat_test123@gitlab.com/user/repo.git"
+
+    def test_inject_credentials_ssh_url_unchanged(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "git@github.com:user/repo.git"
+        result = inject_git_credentials(url, "ghp_test123")
+        assert result == url  # SSH URLs not modified
+
+    def test_inject_credentials_no_token(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "https://github.com/user/repo.git"
+        result = inject_git_credentials(url, None)
+        assert result == url  # No token, no change
+
+    def test_inject_credentials_empty_token(self):
+        from agent_on_call.workspace import inject_git_credentials
+
+        url = "https://github.com/user/repo.git"
+        result = inject_git_credentials(url, "")
+        assert result == url  # Empty token, no change
+
+    def test_sanitize_output_replaces_token(self):
+        from agent_on_call.workspace import sanitize_git_output
+
+        output = "Cloning into 'repo'... remote: https://ghp_secret123@github.com/user/repo.git"
+        result = sanitize_git_output(output, "ghp_secret123")
+        assert "ghp_secret123" not in result
+        assert "***" in result
+
+    def test_sanitize_output_no_token(self):
+        from agent_on_call.workspace import sanitize_git_output
+
+        output = "Cloning into 'repo'..."
+        result = sanitize_git_output(output, None)
+        assert result == output
+
+    def test_sanitize_output_empty_token(self):
+        from agent_on_call.workspace import sanitize_git_output
+
+        output = "Cloning into 'repo'..."
+        result = sanitize_git_output(output, "")
+        assert result == output
+
+    def test_sanitize_output_multiple_occurrences(self):
+        from agent_on_call.workspace import sanitize_git_output
+
+        output = "token=ghp_abc123 remote=ghp_abc123"
+        result = sanitize_git_output(output, "ghp_abc123")
+        assert "ghp_abc123" not in result
+        assert result.count("***") == 2
+
+
 class TestWorkspaceManager:
     def test_create_workspace(self):
         from agent_on_call.workspace import WorkspaceManager

@@ -80,6 +80,39 @@ class TestConfig:
             config = load_config()
             assert config.anthropic_api_key == "sk-ant-api03-real-key"
 
+    def test_load_config_with_git_token(self):
+        from agent_on_call.config import load_config
+
+        env = {
+            "LIVEKIT_URL": "ws://localhost:7880",
+            "LIVEKIT_API_KEY": "devkey",
+            "LIVEKIT_API_SECRET": "secret",
+            "DEEPGRAM_API_KEY": "dg_key",
+            "CARTESIA_API_KEY": "cart_key",
+            "LLM_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "ant_key",
+            "GIT_TOKEN": "ghp_test_token_123",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            config = load_config()
+            assert config.git_token == "ghp_test_token_123"
+
+    def test_load_config_without_git_token(self):
+        from agent_on_call.config import load_config
+
+        env = {
+            "LIVEKIT_URL": "ws://localhost:7880",
+            "LIVEKIT_API_KEY": "devkey",
+            "LIVEKIT_API_SECRET": "secret",
+            "DEEPGRAM_API_KEY": "dg_key",
+            "CARTESIA_API_KEY": "cart_key",
+            "LLM_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "ant_key",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            config = load_config()
+            assert config.git_token is None
+
     def test_load_config_missing_llm_key_for_provider(self):
         from agent_on_call.config import load_config, ConfigError
 

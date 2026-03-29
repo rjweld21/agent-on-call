@@ -20,6 +20,7 @@ class Config:
     llm_provider: str  # "anthropic" or "openai"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    git_token: str | None = None
 
 
 def _require(name: str) -> str:
@@ -53,6 +54,8 @@ def load_config() -> Config:
     else:
         raise ConfigError(f"Unsupported LLM_PROVIDER: {llm_provider}. Use 'anthropic' or 'openai'.")
 
+    git_token = os.environ.get("GIT_TOKEN")
+
     return Config(
         livekit_url=livekit_url,
         livekit_api_key=livekit_api_key,
@@ -62,4 +65,5 @@ def load_config() -> Config:
         llm_provider=llm_provider,
         anthropic_api_key=anthropic_api_key,
         openai_api_key=openai_api_key,
+        git_token=git_token,
     )
