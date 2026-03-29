@@ -62,11 +62,14 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
       data-testid="thinking-panel"
       style={{
         width: "100%",
-        maxWidth: "500px",
         border: "1px solid #334155",
-        borderRadius: "8px",
+        borderRadius: "0",
         background: "#1e293b",
         overflow: "hidden",
+        display: "flex",
+        flexDirection: "column" as const,
+        flex: 1,
+        minHeight: 0,
       }}
     >
       {/* Header */}
@@ -122,7 +125,8 @@ export function ThinkingPanel({ activities, isAgentWorking }: ThinkingPanelProps
           ref={scrollRef}
           data-testid="thinking-panel-content"
           style={{
-            maxHeight: "250px",
+            flex: 1,
+            minHeight: 0,
             overflowY: "auto",
             padding: "0.5rem 0.8rem",
           }}

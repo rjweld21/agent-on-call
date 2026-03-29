@@ -36,13 +36,16 @@ export function TerminalPanel({ entries }: TerminalPanelProps) {
       data-testid="terminal-panel"
       style={{
         width: "100%",
-        maxWidth: "500px",
         border: "1px solid #30363d",
-        borderRadius: "8px",
+        borderRadius: "0",
         background: "#0d1117",
         overflow: "hidden",
         fontFamily:
           'Menlo, Monaco, Consolas, "Courier New", monospace',
+        display: "flex",
+        flexDirection: "column" as const,
+        flex: 1,
+        minHeight: 0,
       }}
     >
       {/* Header */}
@@ -113,7 +116,8 @@ export function TerminalPanel({ entries }: TerminalPanelProps) {
           ref={scrollRef}
           data-testid="terminal-panel-content"
           style={{
-            maxHeight: "300px",
+            flex: 1,
+            minHeight: 0,
             overflowY: "auto",
             padding: "0.5rem 0",
           }}
