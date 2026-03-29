@@ -47,18 +47,16 @@ describe("SettingsPanel", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("renders section titles", () => {
+  it("renders section titles without General", () => {
     renderWithProvider(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
-    expect(screen.getByText("General")).toBeInTheDocument();
+    expect(screen.queryByText("General")).not.toBeInTheDocument();
     expect(screen.getByText("Model")).toBeInTheDocument();
     expect(screen.getByText("Voice")).toBeInTheDocument();
   });
 
-  it("renders placeholder text only for sections without components", () => {
+  it("does not render any placeholder text", () => {
     renderWithProvider(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
-    const placeholders = screen.getAllByText("No settings available yet.");
-    // Model has ModelSelector, Voice has VerbositySlider, only General has placeholder
-    expect(placeholders.length).toBe(1);
+    expect(screen.queryByText("No settings available yet.")).not.toBeInTheDocument();
   });
 
   it("renders ModelSelector in the Model section", () => {

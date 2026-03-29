@@ -10,7 +10,6 @@ interface SettingsPanelProps {
 }
 
 const SECTIONS = [
-  { id: "general", title: "General", description: "General preferences" },
   { id: "model", title: "Model", description: "AI model configuration", component: ModelSelector },
   { id: "voice", title: "Voice", description: "Voice and turn-taking controls", component: VerbositySlider },
 ];
@@ -141,20 +140,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     border: "1px solid #334155",
                   }}
                 >
-                  {SectionComponent ? (
-                    <SectionComponent />
-                  ) : (
-                    <p
-                      style={{
-                        margin: 0,
-                        color: "#475569",
-                        fontSize: "0.8rem",
-                        fontStyle: "italic",
-                      }}
-                    >
-                      No settings available yet.
-                    </p>
-                  )}
+                  {SectionComponent && <SectionComponent />}
                 </div>
               </div>
             );
