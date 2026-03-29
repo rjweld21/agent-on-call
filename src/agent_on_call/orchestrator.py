@@ -10,6 +10,7 @@ from livekit.agents.llm import function_tool
 
 logger = logging.getLogger(__name__)
 
+from agent_on_call.code_analysis import CodeAnalysisTool
 from agent_on_call.guidance_queue import GuidanceQueue
 from agent_on_call.web_tools import WebSearchTool
 from agent_on_call.workspace import (
@@ -49,6 +50,7 @@ class OrchestratorAgent(Agent):
         self.guidance_queue = GuidanceQueue()
         self._workspace = WorkspaceManager()
         self._web = WebSearchTool()
+        self._code = CodeAnalysisTool(self._workspace)
         self._room = None
 
     def set_room(self, room) -> None:
@@ -390,4 +392,29 @@ class OrchestratorAgent(Agent):
         await self._emit_action(
             "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}", status=status
         )
+        return result
+
+    @function_tool
+    async def analyze_codebase(
+        self,
+        context: RunContext,
+        path: str = "/workspace",
+        query: str = "",
+        depth: int = 3,
+    ) -> str:
+        """Analyze a codebase directory — returns project structure, file stats, and stack detection.
+
+        Use this to understand a project's layout before diving into specific files.
+        Optionally search for a pattern across source files.
+
+        Args:
+            path: Directory to analyze (default: /workspace).
+            query: Optional search pattern to grep for in source files.
+            depth: Tree depth limit (default: 3). Increase for deeper exploration.
+        """
+        summary = f"Analyzing: {path}" + (f" (searching for '{query}')" if query else "")
+        await self._emit_action("tool_call", "analyze_codebase", summary)
+        result = await self._code.analyze(path=path, query=query, depth=depth)
+        status = "failed" if result.startswith("Error") else "completed"
+        await self._emit_action("result", "analyze_codebase", f"Analysis {status}", status=status)
         return result
