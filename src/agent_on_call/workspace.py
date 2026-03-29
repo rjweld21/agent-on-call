@@ -1,7 +1,12 @@
 """Workspace container management via Docker SDK."""
 
+import concurrent.futures
+
 import docker
 from docker.models.containers import Container
+
+# Thread pool for running blocking Docker exec calls with timeout support
+_exec_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
 class WorkspaceManager:
@@ -25,8 +30,15 @@ class WorkspaceManager:
         self._workspace_name = name
         return container.id
 
-    def exec_command(self, command: str, workdir: str = "/workspace") -> tuple[int, str]:
-        """Execute a command in the active workspace container. Returns (exit_code, output)."""
+    def exec_command(
+        self, command: str, workdir: str = "/workspace", timeout: int = 30
+    ) -> tuple[int, str, str]:
+        """Execute a command in the active workspace container.
+
+        Returns (exit_code, stdout, stderr) as separate strings.
+        Raises TimeoutError if the command exceeds the timeout.
+        Raises RuntimeError if no active workspace exists.
+        """
         if not self._active_container:
             raise RuntimeError("No active workspace. Create one first.")
 
@@ -36,37 +48,49 @@ class WorkspaceManager:
             self._active_container.start()
             self._active_container.reload()
 
-        result = self._active_container.exec_run(
-            cmd=["sh", "-c", command],
-            workdir=workdir,
-            demux=True,
-        )
+        def _run_exec():
+            return self._active_container.exec_run(
+                cmd=["sh", "-c", command],
+                workdir=workdir,
+                demux=True,
+            )
+
+        future = _exec_pool.submit(_run_exec)
+        try:
+            result = future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(
+                f"Command timed out after {timeout}s: {command[:100]}"
+            )
+
         stdout = result.output[0].decode("utf-8") if result.output[0] else ""
         stderr = result.output[1].decode("utf-8") if result.output[1] else ""
-        output = stdout + stderr
-        return result.exit_code, output.strip()
+        return result.exit_code, stdout.strip(), stderr.strip()
 
     def read_file(self, path: str) -> str:
         """Read a file from the workspace container."""
-        exit_code, output = self.exec_command(f"cat {path}")
+        exit_code, stdout, stderr = self.exec_command(f"cat {path}")
         if exit_code != 0:
-            raise FileNotFoundError(f"Could not read {path}: {output}")
-        return output
+            raise FileNotFoundError(f"Could not read {path}: {stderr or stdout}")
+        return stdout
 
     def write_file(self, path: str, content: str) -> str:
         """Write content to a file in the workspace container."""
         # Use heredoc to handle multi-line content
-        exit_code, output = self.exec_command(f"cat > {path} << 'AOCEOF'\n{content}\nAOCEOF")
+        exit_code, stdout, stderr = self.exec_command(
+            f"cat > {path} << 'AOCEOF'\n{content}\nAOCEOF"
+        )
         if exit_code != 0:
-            raise IOError(f"Could not write {path}: {output}")
+            raise IOError(f"Could not write {path}: {stderr or stdout}")
         return f"Written to {path}"
 
     def list_files(self, path: str = "/workspace") -> str:
         """List files in a directory in the workspace."""
-        exit_code, output = self.exec_command(f"ls -la {path}")
+        exit_code, stdout, stderr = self.exec_command(f"ls -la {path}")
         if exit_code != 0:
-            return f"Could not list {path}: {output}"
-        return output
+            return f"Could not list {path}: {stderr or stdout}"
+        return stdout
 
     def get_active_workspace(self) -> str | None:
         """Return the name of the active workspace, or None."""
