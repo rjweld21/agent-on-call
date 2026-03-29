@@ -264,47 +264,50 @@ class OrchestratorAgent(Agent):
     @function_tool
     async def read_file(self, context: RunContext, path: str) -> str:
         """Read the contents of a file in the workspace."""
-        await self._emit_action("tool_call", "read_file", f"Reading: {path}")
+        read_action_id = await self._emit_action("tool_call", "read_file", f"Reading file: {path}")
         try:
             content = self._workspace.read_file(path)
             if len(content) > 3000:
                 content = content[:1500] + "\n...(truncated)...\n" + content[-500:]
-            await self._emit_action("result", "read_file", f"Read {len(content)} chars from {path}", status="completed")
+            await self._emit_action("result", "read_file", f"Read {len(content)} chars from {path}", status="completed", action_id=read_action_id)
             return content
         except FileNotFoundError as e:
-            await self._emit_action("result", "read_file", f"File not found: {path}", status="failed")
+            await self._emit_action("result", "read_file", f"File not found: {path}", status="failed", action_id=read_action_id)
             return f"Error: {e}"
 
     @function_tool
     async def write_file(self, context: RunContext, path: str, content: str) -> str:
         """Write content to a file in the workspace."""
-        await self._emit_action("tool_call", "write_file", f"Writing: {path}")
+        write_action_id = await self._emit_action("tool_call", "write_file", f"Writing file: {path}")
         try:
             result = self._workspace.write_file(path, content)
-            await self._emit_action("result", "write_file", f"Written to {path}", status="completed")
+            await self._emit_action("result", "write_file", f"Written to {path}", status="completed", action_id=write_action_id)
             return result
         except IOError as e:
-            await self._emit_action("result", "write_file", f"Write failed: {path}", status="failed")
+            await self._emit_action("result", "write_file", f"Write failed: {path}", status="failed", action_id=write_action_id)
             return f"Error: {e}"
 
     @function_tool
     async def list_files(self, context: RunContext, path: str = "/workspace") -> str:
         """List files and directories in the workspace."""
-        await self._emit_action("tool_call", "list_files", f"Listing: {path}")
+        list_action_id = await self._emit_action("tool_call", "list_files", f"Listing directory: {path}")
         result = self._workspace.list_files(path)
-        await self._emit_action("result", "list_files", f"Listed files in {path}", status="completed")
+        await self._emit_action("result", "list_files", f"Listed files in {path}", status="completed", action_id=list_action_id)
         return result
 
     @function_tool
     async def list_workspaces(self, context: RunContext) -> str:
         """List all available workspaces and their status."""
+        ws_action_id = await self._emit_action("tool_call", "list_workspaces", "Listing workspaces...")
         workspaces = self._workspace.list_workspaces()
         if not workspaces:
+            await self._emit_action("result", "list_workspaces", "No workspaces found", status="completed", action_id=ws_action_id)
             return "No workspaces found. Create one with create_workspace."
         lines = [f"- {w['name']} ({w['status']})" for w in workspaces]
         active = self._workspace.get_active_workspace()
         if active:
             lines.append(f"\nActive workspace: {active}")
+        await self._emit_action("result", "list_workspaces", f"Found {len(workspaces)} workspace(s)", status="completed", action_id=ws_action_id)
         return "\n".join(lines)
 
     def _get_git_token(self) -> str | None:
@@ -329,7 +332,7 @@ class OrchestratorAgent(Agent):
         if not repo_url or not repo_url.strip():
             return "Error: Repository URL cannot be empty."
 
-        clone_action_id = await self._emit_action("executing", "git_clone", f"Cloning: {repo_url}")
+        clone_action_id = await self._emit_action("executing", "git_clone", f"Cloning repository: {repo_url}")
         token = self._get_git_token()
         credentialed_url = inject_git_credentials(repo_url, token)
 
@@ -386,7 +389,7 @@ class OrchestratorAgent(Agent):
     @function_tool
     async def git_status(self, context: RunContext) -> str:
         """Show the git working tree status in the workspace."""
-        status_action_id = await self._emit_action("tool_call", "git_status", "Checking git status")
+        status_action_id = await self._emit_action("tool_call", "git_status", "Checking repository status...")
         try:
             exit_code, stdout, stderr = self._workspace.exec_command("git status")
             output = stdout or stderr or ""
@@ -421,7 +424,7 @@ class OrchestratorAgent(Agent):
         if not message or not message.strip():
             return "Error: Commit message cannot be empty."
 
-        commit_action_id = await self._emit_action("executing", "git_commit", f"Committing: {message[:60]}")
+        commit_action_id = await self._emit_action("executing", "git_commit", f"Committing changes: {message[:60]}")
         try:
             # Stage files
             exit_code, stdout, stderr = self._workspace.exec_command(f"git add {files}")
@@ -537,7 +540,7 @@ class OrchestratorAgent(Agent):
         Args:
             query: The search query string.
         """
-        search_action_id = await self._emit_action("tool_call", "web_search", f"Searching: {query[:80]}")
+        search_action_id = await self._emit_action("tool_call", "web_search", f"Searching the web: {query[:80]}")
         result = await self._web.search(query)
         status = "failed" if result.startswith("Error") else "completed"
         exit_code = 1 if status == "failed" else 0
@@ -564,7 +567,7 @@ class OrchestratorAgent(Agent):
         Args:
             url: The full URL to fetch (must start with http:// or https://).
         """
-        fetch_action_id = await self._emit_action("tool_call", "web_fetch", f"Fetching: {url[:80]}")
+        fetch_action_id = await self._emit_action("tool_call", "web_fetch", f"Fetching page: {url[:80]}")
         result = await self._web.fetch(url)
         status = "failed" if result.startswith("Error") else "completed"
         exit_code = 1 if status == "failed" else 0
@@ -600,9 +603,9 @@ class OrchestratorAgent(Agent):
             query: Optional search pattern to grep for in source files.
             depth: Tree depth limit (default: 3). Increase for deeper exploration.
         """
-        summary = f"Analyzing: {path}" + (f" (searching for '{query}')" if query else "")
-        await self._emit_action("tool_call", "analyze_codebase", summary)
+        summary = f"Analyzing project structure: {path}" + (f" (searching for '{query}')" if query else "")
+        analyze_action_id = await self._emit_action("tool_call", "analyze_codebase", summary)
         result = await self._code.analyze(path=path, query=query, depth=depth)
         status = "failed" if result.startswith("Error") else "completed"
-        await self._emit_action("result", "analyze_codebase", f"Analysis {status}", status=status)
+        await self._emit_action("result", "analyze_codebase", f"Analysis {status}", status=status, action_id=analyze_action_id)
         return result

@@ -942,3 +942,193 @@ class TestTerminalWiring:
             ]
             assert len(cmd_outputs) >= 1
             assert cmd_outputs[0]["exitCode"] == 1
+
+
+class TestRichActivityEvents:
+    """Tests for richer activity events from all tool invocations (story #58)."""
+
+    def _get_action_events(self, calls):
+        """Extract agent_action events from publish_data calls."""
+        events = []
+        for c in calls:
+            payload = json.loads(c[0][0].decode())
+            if payload.get("type") == "agent_action":
+                events.append(payload["action"])
+        return events
+
+    @pytest.mark.asyncio
+    async def test_list_workspaces_emits_activity_events(self):
+        """list_workspaces should emit started and completed activity events."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.list_workspaces.return_value = [
+                {"name": "project1", "status": "running", "id": "abc"},
+            ]
+            mock_ws.get_active_workspace.return_value = "project1"
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.list_workspaces(ctx)
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            assert len(events) >= 2, "list_workspaces should emit start + completion events"
+            assert events[0]["status"] == "started"
+            assert events[-1]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_read_file_threads_action_id(self):
+        """read_file should use same action_id for start and completion events."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.read_file.return_value = "file content"
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.read_file(ctx, path="/workspace/test.txt")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            assert len(events) >= 2
+            # Start and completion should share the same action_id
+            assert events[0]["id"] == events[-1]["id"]
+
+    @pytest.mark.asyncio
+    async def test_write_file_threads_action_id(self):
+        """write_file should use same action_id for start and completion events."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.write_file.return_value = "Written to /workspace/test.txt"
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.write_file(ctx, path="/workspace/test.txt", content="hello")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            assert len(events) >= 2
+            assert events[0]["id"] == events[-1]["id"]
+
+    @pytest.mark.asyncio
+    async def test_list_files_threads_action_id(self):
+        """list_files should use same action_id for start and completion events."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.list_files.return_value = "total 0\ndrwxr-xr-x 2 root root 40 Jan  1 00:00 ."
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.list_files(ctx, path="/workspace")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            assert len(events) >= 2
+            assert events[0]["id"] == events[-1]["id"]
+
+    @pytest.mark.asyncio
+    async def test_rich_summaries_are_descriptive(self):
+        """Activity event summaries should be human-readable and descriptive."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.read_file.return_value = "content"
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.read_file(ctx, path="/workspace/README.md")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            start_event = events[0]
+            assert "Reading" in start_event["summary"]
+            assert "README.md" in start_event["summary"]
+
+    @pytest.mark.asyncio
+    async def test_git_clone_has_descriptive_summary(self):
+        """git_clone should have descriptive human-readable summary."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager") as MockWS:
+            mock_ws = MagicMock()
+            mock_ws.exec_command.return_value = (0, "Cloning into 'repo'...", "")
+            MockWS.return_value = mock_ws
+
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.git_clone(ctx, repo_url="https://github.com/user/repo.git")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            start_event = events[0]
+            assert "Cloning repository" in start_event["summary"]
+
+    @pytest.mark.asyncio
+    async def test_web_search_has_descriptive_summary(self):
+        """web_search should have descriptive human-readable summary."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._web.search = AsyncMock(return_value="1. Result")
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.web_search(ctx, query="python tutorials")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            start_event = events[0]
+            assert "Searching" in start_event["summary"]
+            assert "python tutorials" in start_event["summary"]
+
+    @pytest.mark.asyncio
+    async def test_analyze_codebase_has_descriptive_summary(self):
+        """analyze_codebase should have descriptive human-readable summary."""
+        with patch("agent_on_call.orchestrator.WorkspaceManager"):
+            from agent_on_call.orchestrator import OrchestratorAgent
+
+            agent = OrchestratorAgent()
+            agent._code.analyze = AsyncMock(return_value="**Project Type:** Python")
+            mock_room = MagicMock()
+            mock_room.local_participant.publish_data = AsyncMock()
+            agent.set_room(mock_room)
+
+            ctx = MagicMock()
+            await agent.analyze_codebase(ctx, path="/workspace")
+
+            events = self._get_action_events(mock_room.local_participant.publish_data.call_args_list)
+            start_event = events[0]
+            assert "Analyzing" in start_event["summary"]
