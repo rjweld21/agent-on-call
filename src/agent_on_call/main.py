@@ -13,6 +13,7 @@ from livekit.agents import AgentServer, AgentSession
 from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent, ORCHESTRATOR_INSTRUCTIONS
+from agent_on_call.prompt_builder import PromptBuilder, VERBOSITY_PROMPTS, TEXT_MODE_INSTRUCTION
 from agent_on_call.turn_taking import DEFAULT_VAD_CONFIG, DEFAULT_TURN_TAKING_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -78,19 +79,11 @@ def _build_llm(model: str | None = None):
             return anthropic_plugin.LLM(model=effective_model, api_key=effective_key)
 
 
-VERBOSITY_PROMPTS = {
-    1: (
-        "Be extremely concise. Give bare minimum answers. Short, declarative sentences. "
-        "Skip pleasantries, context, and elaboration."
-    ),
-    2: (
-        "Be brief but complete. Answer with just enough context. No filler or examples "
-        "unless asked. One or two sentences when possible."
-    ),
-    3: "Use a natural conversational tone. Provide context when helpful. Explain reasoning briefly.",
-    4: "Give thorough explanations. Walk through reasoning step by step. Offer examples and alternatives.",
-    5: "Explain everything in full detail. Cover background, context, trade-offs, edge cases, and implications.",
-}
+
+
+# VERBOSITY_PROMPTS is now in prompt_builder.py — re-exported here for backward compatibility
+# from agent_on_call.prompt_builder import VERBOSITY_PROMPTS  # already imported above
+
 
 
 def _parse_settings_update(data: bytes) -> dict[str, Any] | None:
@@ -123,9 +116,15 @@ def _parse_settings_update(data: bytes) -> dict[str, Any] | None:
 
 
 def _build_verbosity_instructions(base_instructions: str, verbosity: int) -> str:
-    """Build agent instructions with a verbosity directive appended."""
-    directive = VERBOSITY_PROMPTS.get(verbosity, VERBOSITY_PROMPTS[3])
-    return f"{base_instructions}\n\nVerbosity directive: {directive}"
+    """Build agent instructions with a verbosity directive appended.
+
+    DEPRECATED: Use PromptBuilder instead. Kept for backward compatibility
+    with _apply_settings_update and tests.
+    """
+    builder = PromptBuilder()
+    builder.set_base_instructions(base_instructions)
+    builder.set_verbosity(verbosity)
+    return builder.build()
 
 
 def _get_participant_metadata(ctx: agents.JobContext) -> dict:
@@ -228,12 +227,10 @@ TTS_STATUS_MESSAGES = {
 }
 
 
-TEXT_MODE_INSTRUCTION = (
-    "\n\nNote: TTS is unavailable for this session. Your responses will appear as "
-    "text in the transcript only. Keep responses well-formatted for reading. "
-    "You do not need to change your behavior significantly — just be aware the "
-    "user is reading, not listening."
-)
+
+# TEXT_MODE_INSTRUCTION is now in prompt_builder.py — re-exported here for backward compatibility
+# from agent_on_call.prompt_builder import TEXT_MODE_INSTRUCTION  # already imported above
+
 
 
 def _build_session(model: str | None, tts_enabled: bool = True) -> AgentSession:
@@ -280,6 +277,7 @@ async def _apply_settings_update(
     room: Any,
     current_model: str | None,
     current_verbosity: int,
+    prompt_builder: PromptBuilder | None = None,
 ) -> tuple[str | None, int, bool]:
     """Apply a parsed settings update to the agent and session.
 
@@ -290,7 +288,11 @@ async def _apply_settings_update(
     # Apply verbosity change
     if update["verbosity"] is not None and update["verbosity"] != current_verbosity:
         current_verbosity = update["verbosity"]
-        new_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, current_verbosity)
+        if prompt_builder:
+            prompt_builder.set_verbosity(current_verbosity)
+            new_instructions = prompt_builder.build()
+        else:
+            new_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, current_verbosity)
         await agent.update_instructions(new_instructions)
         logger.info("Mid-session verbosity updated to %d", current_verbosity)
         logger.debug("New instructions (verbosity=%d): %s", current_verbosity, new_instructions[:200])
@@ -342,14 +344,15 @@ async def orchestrator_session(ctx: agents.JobContext):
     if not tts_available:
         logger.warning("TTS unavailable (reason: %s) — running in text-only mode", tts_reason)
 
-    # Build agent with verbosity-adjusted instructions
+    # Build agent with PromptBuilder-composed instructions
     agent = OrchestratorAgent()
-    base_instructions = ORCHESTRATOR_INSTRUCTIONS
-    if not tts_available:
-        base_instructions += TEXT_MODE_INSTRUCTION
+    prompt_builder = PromptBuilder(token_budget=1500)
+    prompt_builder.set_base_instructions(ORCHESTRATOR_INSTRUCTIONS)
+    prompt_builder.set_verbosity(verbosity)
+    prompt_builder.set_tts_available(tts_available)
     # Set initial instructions before session starts (agent._activity is None,
     # so update_instructions() would just set _instructions synchronously anyway)
-    agent._instructions = _build_verbosity_instructions(base_instructions, verbosity)
+    agent._instructions = prompt_builder.build()
 
     session = _build_session(selected_model, tts_enabled=tts_available)
 
@@ -414,7 +417,8 @@ async def orchestrator_session(ctx: agents.JobContext):
         # Update agent instructions to reflect text-only mode
         # Schedule async update_instructions since this callback is synchronous
         async def _update_tts_instructions():
-            new_instr = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity)
+            prompt_builder.set_tts_available(False)
+            new_instr = prompt_builder.build()
             await agent.update_instructions(new_instr)
             logger.debug("Instructions updated for text-only mode")
 
@@ -478,7 +482,8 @@ async def orchestrator_session(ctx: agents.JobContext):
             return
 
         selected_model, verbosity, _ = await _apply_settings_update(
-            update, agent, session, ctx.room, selected_model, verbosity
+            update, agent, session, ctx.room, selected_model, verbosity,
+            prompt_builder=prompt_builder,
         )
 
     def _on_data_received(data_packet: rtc.DataPacket):
