@@ -57,13 +57,18 @@ describe("SettingsPanel", () => {
   it("renders placeholder text only for sections without components", () => {
     renderWithProvider(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
     const placeholders = screen.getAllByText("No settings available yet.");
-    // Model section now has ModelSelector, so only General and Voice have placeholders
-    expect(placeholders.length).toBe(2);
+    // Model has ModelSelector, Voice has VerbositySlider, only General has placeholder
+    expect(placeholders.length).toBe(1);
   });
 
   it("renders ModelSelector in the Model section", () => {
     renderWithProvider(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
     expect(screen.getByTestId("model-selector")).toBeInTheDocument();
+  });
+
+  it("renders VerbositySlider in the Voice section", () => {
+    renderWithProvider(<SettingsPanel isOpen={true} onClose={vi.fn()} />);
+    expect(screen.getByTestId("verbosity-slider")).toBeInTheDocument();
   });
 
   it("has correct aria-label on the panel", () => {
