@@ -24,6 +24,7 @@ server = AgentServer()
 
 VALID_ANTHROPIC_MODELS = {
     "claude-haiku-4-5-20250514",
+    "claude-sonnet-4-20250514",
     "claude-sonnet-4-5-20250514",
     "claude-opus-4-20250514",
 }
@@ -143,9 +144,10 @@ def _get_participant_metadata(ctx: agents.JobContext) -> dict:
 def _check_tts_available() -> tuple[bool, str]:
     """Check if TTS is available by validating the Cartesia API key.
 
-    Makes an actual HTTP request to Cartesia's voices endpoint to verify the
-    key is valid and the account has credits. This catches expired keys and
-    accounts with no remaining credits at session start.
+    Makes HTTP requests to Cartesia's voices endpoint AND the TTS SSE
+    endpoint to verify the key is valid and the account has synthesis credits.
+    The voices endpoint alone may return 200 even when the account has no
+    credits for synthesis, so we also probe the TTS endpoint.
 
     Returns (available, reason) where reason is one of:
     - "" (empty string) if available
@@ -163,17 +165,19 @@ def _check_tts_available() -> tuple[bool, str]:
     if api_key.strip().lower() in placeholder_values:
         return (False, "no_key")
 
-    # Validate the key with a lightweight API call
+    headers = {
+        "X-API-Key": api_key.strip(),
+        "Cartesia-Version": "2024-06-10",
+    }
+
+    # First: validate the key with the voices endpoint
     try:
         resp = httpx.get(
             "https://api.cartesia.ai/voices",
-            headers={
-                "X-API-Key": api_key.strip(),
-                "Cartesia-Version": "2024-06-10",
-            },
+            headers=headers,
             timeout=5.0,
         )
-        if resp.status_code == 401 or resp.status_code == 403:
+        if resp.status_code in (401, 403):
             logger.warning("Cartesia API key is invalid (HTTP %d)", resp.status_code)
             return (False, "auth_failed")
         if resp.status_code == 402:
@@ -184,6 +188,33 @@ def _check_tts_available() -> tuple[bool, str]:
             return (False, "network_error")
     except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as exc:
         logger.warning("Could not reach Cartesia API for health check: %s", exc)
+        return (False, "network_error")
+
+    # Second: probe the TTS endpoint to verify synthesis credits.
+    # Send a minimal TTS request — the server will reject it with 402 if no
+    # credits remain, or 400/422 if the request body is invalid (which means
+    # auth passed and credits are available).
+    try:
+        tts_resp = httpx.post(
+            "https://api.cartesia.ai/tts/bytes",
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                "transcript": "test",
+                "model_id": "sonic-2",
+                "voice": {"mode": "id", "id": "a0e99841-438c-4a64-b679-ae501e7d6091"},
+                "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 8000},
+            },
+            timeout=5.0,
+        )
+        if tts_resp.status_code in (401, 403):
+            logger.warning("Cartesia TTS auth failed (HTTP %d)", tts_resp.status_code)
+            return (False, "auth_failed")
+        if tts_resp.status_code == 402:
+            logger.warning("Cartesia account has no TTS credits (HTTP 402)")
+            return (False, "no_credits")
+        # 200 or 4xx (bad request) both mean the key works and has credits
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as exc:
+        logger.warning("Could not reach Cartesia TTS endpoint for health check: %s", exc)
         return (False, "network_error")
 
     return (True, "")
@@ -319,6 +350,11 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     await session.start(room=ctx.room, agent=agent)
 
+    # When TTS is unavailable, disable audio output so the SDK doesn't
+    # attempt TTS inference (which raises RuntimeError for missing tts_node).
+    if not tts_available:
+        session.output.set_audio_enabled(False)
+
     # Set room reference for action event publishing
     agent.set_room(ctx.room)
 
@@ -351,42 +387,80 @@ async def orchestrator_session(ctx: agents.JobContext):
     # in text-only mode rather than crashing the session.
     tts_disabled_at_runtime = False
 
-    @session.on("error")
-    def _on_session_error(error):
+    def _disable_tts_runtime(reason: str):
+        """Disable TTS for this session and notify the frontend."""
         nonlocal tts_disabled_at_runtime
         if tts_disabled_at_runtime:
             return
-
-        from livekit.agents import tts as tts_module
-
-        if not isinstance(error, tts_module.TTSError):
-            return
-
-        # Determine reason from the underlying error
-        reason = "network_error"
-        err = error.error
-        if hasattr(err, "status_code"):
-            if err.status_code in (401, 403):
-                reason = "auth_failed"
-            elif err.status_code == 402:
-                reason = "no_credits"
-
         logger.warning(
             "TTS failed at runtime (reason: %s) — disabling TTS for this session",
             reason,
         )
         tts_disabled_at_runtime = True
 
-        # Remove TTS from the session so it switches to text-only
+        # Remove TTS from the session and disable audio output so the SDK
+        # doesn't attempt TTS inference (which raises RuntimeError).
         session._tts = None
+        try:
+            session.output.set_audio_enabled(False)
+        except Exception as e:
+            logger.warning("Failed to disable audio output: %s", e)
 
         # Update agent instructions to reflect text-only mode
-        agent._raw_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity)
+        agent._raw_instructions = _build_verbosity_instructions(
+            ORCHESTRATOR_INSTRUCTIONS + TEXT_MODE_INSTRUCTION, verbosity
+        )
 
         asyncio.create_task(_notify_tts_disabled(reason))
 
+    @session.on("error")
+    def _on_session_error(error):
+        if tts_disabled_at_runtime:
+            return
+
+        # Detect TTS errors — check both the SDK TTSError and raw exceptions
+        reason = "network_error"
+        is_tts_error = False
+
+        # Check if it's a LiveKit TTSError wrapper
+        try:
+            from livekit.agents import tts as tts_module
+            if isinstance(error, tts_module.TTSError):
+                is_tts_error = True
+                err = error.error
+                if hasattr(err, "status_code"):
+                    if err.status_code in (401, 403):
+                        reason = "auth_failed"
+                    elif err.status_code == 402:
+                        reason = "no_credits"
+        except (ImportError, AttributeError):
+            pass
+
+        # Check if the error itself (or its string) relates to TTS/Cartesia
+        if not is_tts_error:
+            error_str = str(error).lower()
+            if "cartesia" in error_str or "tts" in error_str:
+                is_tts_error = True
+                if "402" in error_str:
+                    reason = "no_credits"
+                elif "401" in error_str or "403" in error_str:
+                    reason = "auth_failed"
+
+        # Also check for WSServerHandshakeError with status codes
+        if not is_tts_error:
+            status = getattr(error, "status", None)
+            if status in (401, 402, 403):
+                is_tts_error = True
+                if status in (401, 403):
+                    reason = "auth_failed"
+                elif status == 402:
+                    reason = "no_credits"
+
+        if is_tts_error:
+            _disable_tts_runtime(reason)
+
     # --- Mid-session settings via data channel ---
-    async def _on_data_received(data_packet: rtc.DataPacket):
+    async def _handle_data_received(data_packet: rtc.DataPacket):
         """Handle settings updates sent by the frontend via data channel."""
         nonlocal selected_model, verbosity
 
@@ -398,11 +472,39 @@ async def orchestrator_session(ctx: agents.JobContext):
             update, agent, session, ctx.room, selected_model, verbosity
         )
 
+    def _on_data_received(data_packet: rtc.DataPacket):
+        """Sync wrapper — LiveKit requires .on() callbacks to be synchronous."""
+        asyncio.create_task(_handle_data_received(data_packet))
+
     ctx.room.on("data_received", _on_data_received)
 
-    await session.generate_reply(
-        instructions=("Greet the user. Introduce yourself as the Agent On Call " "orchestrator. Ask how you can help today.")
+    greeting_instructions = (
+        "Greet the user. Introduce yourself as the Agent On Call "
+        "orchestrator. Ask how you can help today."
     )
+    try:
+        await session.generate_reply(instructions=greeting_instructions)
+    except Exception as e:
+        error_str = str(e).lower()
+        logger.error("generate_reply failed: %s", e)
+
+        # If TTS-related, disable TTS and retry without voice
+        if (
+            "cartesia" in error_str
+            or "tts" in error_str
+            or "402" in error_str
+            or "handshake" in error_str
+        ):
+            logger.warning("TTS failure during greeting — rebuilding session without TTS")
+            _disable_tts_runtime("no_credits")
+
+            # generate_reply should now work without TTS since _tts is None
+            try:
+                await session.generate_reply(instructions=greeting_instructions)
+            except Exception as retry_err:
+                logger.error("generate_reply retry also failed: %s", retry_err)
+        else:
+            logger.error("Non-TTS error in generate_reply — not retrying")
 
 
 if __name__ == "__main__":

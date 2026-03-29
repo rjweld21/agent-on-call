@@ -134,3 +134,28 @@ class TestSourceCodeSync:
         source = main_path.read_text()
 
         assert "import asyncio" in source, "main.py must import asyncio for asyncio.create_task()"
+
+    def test_main_py_has_sync_data_received_handler(self):
+        """The data_received handler passed to room.on() must be sync.
+
+        LiveKit SDK 1.5.1 raises ValueError for async callbacks on .on().
+        The async logic must be in a separate function called via create_task.
+        """
+        import pathlib
+
+        main_path = pathlib.Path(__file__).parent.parent / "src" / "agent_on_call" / "main.py"
+        source = main_path.read_text()
+
+        # The sync wrapper registered with room.on() must NOT be async
+        assert 'ctx.room.on("data_received", _on_data_received)' in source, (
+            "Expected room.on() registration for _on_data_received"
+        )
+        # _on_data_received itself must be sync (def, not async def)
+        assert "def _on_data_received(data_packet" in source, (
+            "Could not find sync 'def _on_data_received' in main.py"
+        )
+        # It should NOT be 'async def _on_data_received'
+        assert "async def _on_data_received" not in source, (
+            "Found 'async def _on_data_received' in main.py — "
+            "this will crash with LiveKit SDK 1.5.1. Use a sync wrapper."
+        )
