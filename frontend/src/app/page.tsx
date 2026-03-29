@@ -391,154 +391,45 @@ function AgentInterface() {
 
   return (
     <div
+      data-testid="room-layout"
       style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 27%) minmax(0, 38%) minmax(0, 35%)",
         height: "100%",
-        gap: "1.2rem",
         fontFamily: "system-ui, sans-serif",
         color: "#e2e8f0",
-        padding: "1.5rem",
-        overflow: "auto",
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <h1 style={{ fontSize: "1.8rem", fontWeight: "bold", margin: 0 }}>Agent On Call</h1>
-        <button
-          data-testid="settings-button"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Open settings"
-          style={{
-            background: "none",
-            border: "1px solid #334155",
-            borderRadius: "8px",
-            color: "#94a3b8",
-            cursor: "pointer",
-            fontSize: "1.2rem",
-            padding: "0.3rem 0.5rem",
-            lineHeight: 1,
-          }}
-        >
-          &#9881;
-        </button>
-      </div>
-
-      {/* TTS unavailable banner */}
-      {ttsBanner && (
-        <div
-          data-testid="tts-banner"
-          style={{
-            width: "100%",
-            maxWidth: "500px",
-            padding: "0.6rem 0.8rem",
-            background: "rgba(245, 158, 11, 0.15)",
-            border: "1px solid #f59e0b",
-            borderRadius: "8px",
-            color: "#fbbf24",
-            fontSize: "0.8rem",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "0.5rem",
-          }}
-        >
-          <span>
-            {ttsBanner.reason === "no_key"
-              ? "Voice responses unavailable. Add a Cartesia API key in settings for voice responses."
-              : ttsBanner.reason === "auth_failed"
-                ? "Voice responses unavailable. Cartesia API key is invalid."
-                : ttsBanner.reason === "no_credits"
-                  ? "Voice responses unavailable. Cartesia account has no credits remaining."
-                  : "Voice responses unavailable. Could not reach Cartesia API."}
-          </span>
-          <button
-            data-testid="tts-banner-dismiss"
-            onClick={() => setTtsBanner(null)}
-            aria-label="Dismiss TTS notification"
-            style={{
-              background: "none",
-              border: "none",
-              color: "#fbbf24",
-              cursor: "pointer",
-              fontSize: "1rem",
-              lineHeight: 1,
-              padding: "0 0.2rem",
-              flexShrink: 0,
-            }}
-          >
-            &#10005;
-          </button>
+      {/* ===== LEFT COLUMN: Transcript (full height, scrollable) ===== */}
+      <div
+        data-testid="column-transcript"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          borderRight: "1px solid #334155",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{
+          padding: "0.8rem",
+          borderBottom: "1px solid #334155",
+          flexShrink: 0,
+        }}>
+          <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", margin: 0 }}>
+            Transcript
+          </h3>
         </div>
-      )}
-
-      <p style={{ color: "#94a3b8", margin: 0 }}>
-        Agent Status:{" "}
-        <span
-          style={{
-            color:
-              state === "speaking" ? "#22c55e"
-                : state === "listening" ? "#3b82f6"
-                : state === "connecting" ? "#f59e0b"
-                : "#94a3b8",
-            fontWeight: "bold",
-          }}
-        >
-          {state === "speaking" && ttsBanner ? "responding" : state}
-        </span>
-      </p>
-
-      <BarVisualizer
-        state={state}
-        barCount={5}
-        trackRef={audioTrack}
-        style={{ width: "300px", height: "60px" }}
-      />
-
-      {/* Mic Monitor */}
-      <MicMonitor />
-
-      {/* Agent Thinking/Activity Panel */}
-      <ThinkingPanel
-        activities={activities}
-        isAgentWorking={state === "thinking"}
-      />
-
-      {/* Terminal Output Panel */}
-      <TerminalPanel entries={terminalEntries} />
-
-      {/* Participants */}
-      <div style={{ width: "100%", maxWidth: "500px" }}>
-        <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.4rem" }}>
-          Participants ({participants.length})
-        </h3>
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {participants.map((p) => (
-            <li key={p.identity} style={{
-              padding: "0.2rem 0.6rem", fontSize: "0.85rem",
-              color: p.isAgent ? "#fcd34d" : "#e2e8f0",
-            }}>
-              {p.isAgent ? "\u{1F916} " : "\u{1F464} "}
-              {p.name || p.identity}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* Transcript */}
-      <div style={{ width: "100%", maxWidth: "500px" }}>
         <div
           ref={transcriptRef}
           style={{
-            maxHeight: "220px", overflowY: "auto",
-            border: "1px solid #334155", borderRadius: "8px 8px 0 0",
-            padding: "0.8rem", background: "#1e293b",
+            flex: 1,
+            overflowY: "auto",
+            padding: "0.8rem",
+            background: "#1e293b",
           }}
         >
-          <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.5rem", margin: "0 0 0.5rem 0" }}>
-            Transcript
-          </h3>
           {transcript.length === 0 ? (
             <p style={{ color: "#475569", fontSize: "0.8rem", fontStyle: "italic", margin: 0 }}>
               Speak or type to start the conversation...
@@ -608,12 +499,13 @@ function AgentInterface() {
           )}
         </div>
 
-        {/* Text input */}
+        {/* Text input at bottom of transcript column */}
         <div style={{
           display: "flex",
-          border: "1px solid #334155", borderTop: "1px solid #1e3a5f",
-          borderRadius: "0 0 8px 8px", overflow: "hidden",
+          border: "none", borderTop: "1px solid #334155",
+          overflow: "hidden",
           background: "#0f172a",
+          flexShrink: 0,
         }}>
           <input
             type="text"
@@ -644,16 +536,167 @@ function AgentInterface() {
         </div>
       </div>
 
-      {/* Call Controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-        <MuteButton />
-        <DisconnectButton style={{
-          padding: "0.5rem 1.5rem", borderRadius: "8px",
-          border: "1px solid #dc2626", background: "#7f1d1d",
-          color: "#fca5a5", cursor: "pointer", fontSize: "0.9rem",
-        }}>
-          Leave Call
-        </DisconnectButton>
+      {/* ===== CENTER COLUMN: Controls ===== */}
+      <div
+        data-testid="column-controls"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          height: "100%",
+          overflowY: "auto",
+          padding: "1.5rem 1rem",
+          gap: "1.2rem",
+          borderRight: "1px solid #334155",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: "bold", margin: 0 }}>Agent On Call</h1>
+          <button
+            data-testid="settings-button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Open settings"
+            style={{
+              background: "none",
+              border: "1px solid #334155",
+              borderRadius: "8px",
+              color: "#94a3b8",
+              cursor: "pointer",
+              fontSize: "1.2rem",
+              padding: "0.3rem 0.5rem",
+              lineHeight: 1,
+            }}
+          >
+            &#9881;
+          </button>
+        </div>
+
+        {/* TTS unavailable banner */}
+        {ttsBanner && (
+          <div
+            data-testid="tts-banner"
+            style={{
+              width: "100%",
+              padding: "0.6rem 0.8rem",
+              background: "rgba(245, 158, 11, 0.15)",
+              border: "1px solid #f59e0b",
+              borderRadius: "8px",
+              color: "#fbbf24",
+              fontSize: "0.8rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.5rem",
+            }}
+          >
+            <span>
+              {ttsBanner.reason === "no_key"
+                ? "Voice responses unavailable. Add a Cartesia API key in settings for voice responses."
+                : ttsBanner.reason === "auth_failed"
+                  ? "Voice responses unavailable. Cartesia API key is invalid."
+                  : ttsBanner.reason === "no_credits"
+                    ? "Voice responses unavailable. Cartesia account has no credits remaining."
+                    : "Voice responses unavailable. Could not reach Cartesia API."}
+            </span>
+            <button
+              data-testid="tts-banner-dismiss"
+              onClick={() => setTtsBanner(null)}
+              aria-label="Dismiss TTS notification"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#fbbf24",
+                cursor: "pointer",
+                fontSize: "1rem",
+                lineHeight: 1,
+                padding: "0 0.2rem",
+                flexShrink: 0,
+              }}
+            >
+              &#10005;
+            </button>
+          </div>
+        )}
+
+        {/* Participants */}
+        <div style={{ width: "100%" }}>
+          <h3 style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "0.4rem" }}>
+            Participants ({participants.length})
+          </h3>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {participants.map((p) => (
+              <li key={p.identity} style={{
+                padding: "0.2rem 0.6rem", fontSize: "0.85rem",
+                color: p.isAgent ? "#fcd34d" : "#e2e8f0",
+              }}>
+                {p.isAgent ? "\u{1F916} " : "\u{1F464} "}
+                {p.name || p.identity}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p style={{ color: "#94a3b8", margin: 0 }}>
+          Agent Status:{" "}
+          <span
+            style={{
+              color:
+                state === "speaking" ? "#22c55e"
+                  : state === "listening" ? "#3b82f6"
+                  : state === "connecting" ? "#f59e0b"
+                  : "#94a3b8",
+              fontWeight: "bold",
+            }}
+          >
+            {state === "speaking" && ttsBanner ? "responding" : state}
+          </span>
+        </p>
+
+        <BarVisualizer
+          state={state}
+          barCount={5}
+          trackRef={audioTrack}
+          style={{ width: "100%", maxWidth: "300px", height: "60px" }}
+        />
+
+        {/* Mic Monitor */}
+        <MicMonitor />
+
+        {/* Call Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "auto", paddingTop: "1rem" }}>
+          <MuteButton />
+          <DisconnectButton style={{
+            padding: "0.5rem 1.5rem", borderRadius: "8px",
+            border: "1px solid #dc2626", background: "#7f1d1d",
+            color: "#fca5a5", cursor: "pointer", fontSize: "0.9rem",
+          }}>
+            Leave Call
+          </DisconnectButton>
+        </div>
+      </div>
+
+      {/* ===== RIGHT COLUMN: Activity (top 50%) + Terminal (bottom 50%) ===== */}
+      <div
+        data-testid="column-activity"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          overflow: "hidden",
+        }}
+      >
+        {/* Agent Thinking/Activity Panel — top half */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <ThinkingPanel
+            activities={activities}
+            isAgentWorking={state === "thinking"}
+          />
+        </div>
+
+        {/* Terminal Output Panel — bottom half */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", borderTop: "1px solid #334155" }}>
+          <TerminalPanel entries={terminalEntries} />
+        </div>
       </div>
 
       <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />

@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Responsive: stack 3-column layout vertically on narrow screens */
+@media (max-width: 768px) {
+  [data-testid="room-layout"] {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto 1fr auto !important;
+    overflow-y: auto !important;
+  }
+  [data-testid="column-transcript"],
+  [data-testid="column-controls"],
+  [data-testid="column-activity"] {
+    border-right: none !important;
+    height: auto !important;
+    min-height: 300px;
+  }
+}
