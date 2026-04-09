@@ -106,9 +106,7 @@ class TestWorkspaceManager:
             mock_docker.from_env.return_value = mock_client
             mock_container = MagicMock()
             mock_container.status = "running"
-            mock_container.exec_run.return_value = MagicMock(
-                exit_code=0, output=(b"hello world\n", b"some warning\n")
-            )
+            mock_container.exec_run.return_value = MagicMock(exit_code=0, output=(b"hello world\n", b"some warning\n"))
 
             mgr = WorkspaceManager()
             mgr._active_container = mock_container
@@ -127,9 +125,7 @@ class TestWorkspaceManager:
             mock_docker.from_env.return_value = mock_client
             mock_container = MagicMock()
             mock_container.status = "running"
-            mock_container.exec_run.return_value = MagicMock(
-                exit_code=0, output=(None, None)
-            )
+            mock_container.exec_run.return_value = MagicMock(exit_code=0, output=(None, None))
 
             mgr = WorkspaceManager()
             mgr._active_container = mock_container
@@ -148,9 +144,7 @@ class TestWorkspaceManager:
             mock_docker.from_env.return_value = mock_client
             mock_container = MagicMock()
             mock_container.status = "running"
-            mock_container.exec_run.return_value = MagicMock(
-                exit_code=1, output=(b"", b"command not found\n")
-            )
+            mock_container.exec_run.return_value = MagicMock(exit_code=1, output=(b"", b"command not found\n"))
 
             mgr = WorkspaceManager()
             mgr._active_container = mock_container
@@ -208,9 +202,7 @@ class TestWorkspaceManager:
                     mock_container.status = "running"
 
             mock_container.reload.side_effect = reload_side_effect
-            mock_container.exec_run.return_value = MagicMock(
-                exit_code=0, output=(b"output", b"")
-            )
+            mock_container.exec_run.return_value = MagicMock(exit_code=0, output=(b"output", b""))
 
             mgr = WorkspaceManager()
             mgr._active_container = mock_container
@@ -264,9 +256,7 @@ class TestWorkspaceManager:
             mock_docker.from_env.return_value = mock_client
             mock_container = MagicMock()
             mock_container.status = "running"
-            mock_container.exec_run.return_value = MagicMock(
-                exit_code=1, output=(b"", b"No such file or directory")
-            )
+            mock_container.exec_run.return_value = MagicMock(exit_code=1, output=(b"", b"No such file or directory"))
 
             mgr = WorkspaceManager()
             mgr._active_container = mock_container

@@ -77,9 +77,7 @@ class WorkspaceManager:
         self._workspace_name = name
         return container.id
 
-    def exec_command(
-        self, command: str, workdir: str = "/workspace", timeout: int = 30
-    ) -> tuple[int, str, str]:
+    def exec_command(self, command: str, workdir: str = "/workspace", timeout: int = 30) -> tuple[int, str, str]:
         """Execute a command in the active workspace container.
 
         Returns (exit_code, stdout, stderr) as separate strings.
@@ -107,9 +105,7 @@ class WorkspaceManager:
             result = future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            raise TimeoutError(
-                f"Command timed out after {timeout}s: {command[:100]}"
-            )
+            raise TimeoutError(f"Command timed out after {timeout}s: {command[:100]}")
 
         stdout = result.output[0].decode("utf-8") if result.output[0] else ""
         stderr = result.output[1].decode("utf-8") if result.output[1] else ""
@@ -125,9 +121,7 @@ class WorkspaceManager:
     def write_file(self, path: str, content: str) -> str:
         """Write content to a file in the workspace container."""
         # Use heredoc to handle multi-line content
-        exit_code, stdout, stderr = self.exec_command(
-            f"cat > {path} << 'AOCEOF'\n{content}\nAOCEOF"
-        )
+        exit_code, stdout, stderr = self.exec_command(f"cat > {path} << 'AOCEOF'\n{content}\nAOCEOF")
         if exit_code != 0:
             raise IOError(f"Could not write {path}: {stderr or stdout}")
         return f"Written to {path}"

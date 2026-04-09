@@ -190,7 +190,10 @@ class CodeAnalysisTool:
 
         # Fallback: find command for non-git directories
         exit_code, stdout, stderr = self._workspace.exec_command(
-            f"find {path} -maxdepth 4 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/__pycache__/*' -type f",
+            f"find {path} -maxdepth 4"
+            f" -not -path '*/node_modules/*'"
+            f" -not -path '*/.git/*'"
+            f" -not -path '*/__pycache__/*' -type f",
             timeout=15,
         )
         if exit_code == 0:

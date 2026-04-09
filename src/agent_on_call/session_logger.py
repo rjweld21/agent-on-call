@@ -17,9 +17,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # Regex that matches the structured log format
-LOG_FORMAT_RE = re.compile(
-    r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] \[\w+\] \[\w+\] .+"
-)
+LOG_FORMAT_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] \[\w+\] \[\w+\] .+")
 
 DEFAULT_SESSION_DIR = os.path.join(".aoc", "sessions")
 DEFAULT_MAX_FILES = 20
