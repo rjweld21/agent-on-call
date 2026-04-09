@@ -769,16 +769,97 @@ function AgentInterface() {
   );
 }
 
+function ConnectionError({
+  error,
+  onRetry,
+  onDismiss,
+}: {
+  error: string;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      data-testid="connection-error"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100vh",
+        gap: "1.5rem",
+        background: "#0f172a",
+        fontFamily: "system-ui, sans-serif",
+        color: "#e2e8f0",
+      }}
+    >
+      <h1 style={{ fontSize: "2rem", fontWeight: "bold", color: "#fca5a5" }}>
+        Connection Error
+      </h1>
+      <div
+        data-testid="error-message"
+        style={{
+          background: "#7f1d1d",
+          border: "1px solid #dc2626",
+          borderRadius: "8px",
+          padding: "1rem 1.5rem",
+          maxWidth: "500px",
+          textAlign: "center",
+          color: "#fca5a5",
+          fontSize: "0.9rem",
+        }}
+      >
+        {error}
+      </div>
+      <div style={{ display: "flex", gap: "1rem" }}>
+        <button
+          data-testid="retry-button"
+          onClick={onRetry}
+          style={{
+            padding: "0.8rem 2rem",
+            borderRadius: "10px",
+            border: "none",
+            background: "#6366f1",
+            color: "white",
+            fontSize: "1rem",
+            cursor: "pointer",
+            fontWeight: "bold",
+          }}
+        >
+          Retry
+        </button>
+        <button
+          data-testid="dismiss-error-button"
+          onClick={onDismiss}
+          style={{
+            padding: "0.8rem 2rem",
+            borderRadius: "10px",
+            border: "1px solid #334155",
+            background: "transparent",
+            color: "#94a3b8",
+            fontSize: "1rem",
+            cursor: "pointer",
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function HomeInner() {
   const [connectionDetails, setConnectionDetails] = useState<{
     token: string;
     url: string;
   } | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const { settings } = useSettings();
 
   const connect = useCallback(async () => {
     setConnecting(true);
+    setConnectionError(null);
     try {
       const model = (settings.model?.anthropicModel as string) || "";
       const verbosity = (settings.voice?.verbosity as number) || 3;
@@ -787,18 +868,39 @@ function HomeInner() {
       if (verbosity !== 3) params.set("verbosity", String(verbosity));
       const qs = params.toString();
       const resp = await fetch(`/api/token${qs ? `?${qs}` : ""}`);
+      if (!resp.ok) {
+        throw new Error(`Server returned ${resp.status}: ${resp.statusText}`);
+      }
       const data = await resp.json();
+      if (!data.token || !data.url) {
+        throw new Error("Invalid server response: missing token or URL");
+      }
       setConnectionDetails({ token: data.token, url: data.url });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to connect to server";
       console.error("Failed to get token:", err);
+      setConnectionError(message);
     } finally {
       setConnecting(false);
     }
   }, [settings.model?.anthropicModel, settings.voice?.verbosity]);
 
-  const disconnect = useCallback(() => {
+  const handleDisconnected = useCallback(() => {
     setConnectionDetails(null);
   }, []);
+
+  if (connectionError) {
+    return (
+      <ConnectionError
+        error={connectionError}
+        onRetry={() => {
+          setConnectionError(null);
+          connect();
+        }}
+        onDismiss={() => setConnectionError(null)}
+      />
+    );
+  }
 
   if (connectionDetails) {
     return (
@@ -812,7 +914,7 @@ function HomeInner() {
             noiseSuppression: true,
             autoGainControl: true,
           }}
-          onDisconnected={disconnect}
+          onDisconnected={handleDisconnected}
           style={{ height: "100%" }}
         >
           <AgentInterface />
@@ -833,6 +935,7 @@ function HomeInner() {
         Join a call with your AI orchestrator
       </p>
       <button
+        data-testid="start-call-button"
         onClick={connect}
         disabled={connecting}
         style={{
