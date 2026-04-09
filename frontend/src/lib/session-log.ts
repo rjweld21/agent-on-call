@@ -17,6 +17,8 @@ const DEFAULT_MAX_ENTRIES = 5000;
 export class SessionLogBuffer {
   private _entries: LogEntry[] = [];
   private _maxEntries: number;
+  private _autoSaveInterval: ReturnType<typeof setInterval> | null = null;
+  private _beforeUnloadHandler: ((e: Event) => void) | null = null;
 
   constructor(maxEntries: number = DEFAULT_MAX_ENTRIES) {
     this._maxEntries = maxEntries;
@@ -81,5 +83,38 @@ export class SessionLogBuffer {
   /** Create a Blob suitable for file download. */
   toBlob(): Blob {
     return new Blob([this.toText()], { type: "text/plain" });
+  }
+
+  /** Start periodic auto-save to localStorage. */
+  startAutoSave(intervalMs: number = 30000, sessionId: string = "current"): void {
+    this.stopAutoSave();
+    this._autoSaveInterval = setInterval(() => {
+      this.saveToLocalStorage(sessionId);
+    }, intervalMs);
+  }
+
+  /** Stop periodic auto-save. */
+  stopAutoSave(): void {
+    if (this._autoSaveInterval !== null) {
+      clearInterval(this._autoSaveInterval);
+      this._autoSaveInterval = null;
+    }
+  }
+
+  /** Register a beforeunload listener that saves to localStorage. */
+  setupBeforeUnload(sessionId: string = "current"): void {
+    this.teardownBeforeUnload();
+    this._beforeUnloadHandler = () => {
+      this.saveToLocalStorage(sessionId);
+    };
+    window.addEventListener("beforeunload", this._beforeUnloadHandler);
+  }
+
+  /** Remove the beforeunload listener. */
+  teardownBeforeUnload(): void {
+    if (this._beforeUnloadHandler !== null) {
+      window.removeEventListener("beforeunload", this._beforeUnloadHandler);
+      this._beforeUnloadHandler = null;
+    }
   }
 }

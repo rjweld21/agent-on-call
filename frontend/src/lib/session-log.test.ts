@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SessionLogBuffer } from "./session-log";
 
 describe("SessionLogBuffer", () => {
@@ -82,5 +82,122 @@ describe("SessionLogBuffer", () => {
     // Should keep the newest entries
     const last = buffer.entries()[buffer.entries().length - 1];
     expect(last.message).toBe("entry 5099");
+  });
+
+  describe("startAutoSave / stopAutoSave", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.stubGlobal("localStorage", { setItem: vi.fn(), getItem: vi.fn() });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    it("periodically calls saveToLocalStorage", () => {
+      const spy = vi.spyOn(buffer, "saveToLocalStorage");
+      buffer.startAutoSave(1000, "sess-1");
+
+      // Should not fire immediately
+      expect(spy).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith("sess-1");
+
+      vi.advanceTimersByTime(2000);
+      expect(spy).toHaveBeenCalledTimes(3);
+
+      buffer.stopAutoSave();
+    });
+
+    it("stopAutoSave clears the interval", () => {
+      const spy = vi.spyOn(buffer, "saveToLocalStorage");
+      buffer.startAutoSave(1000, "sess-1");
+
+      vi.advanceTimersByTime(1000);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      buffer.stopAutoSave();
+      vi.advanceTimersByTime(5000);
+      expect(spy).toHaveBeenCalledTimes(1); // No more calls
+    });
+
+    it("calling startAutoSave twice replaces the previous interval", () => {
+      const spy = vi.spyOn(buffer, "saveToLocalStorage");
+      buffer.startAutoSave(1000, "sess-1");
+      buffer.startAutoSave(2000, "sess-2");
+
+      vi.advanceTimersByTime(2000);
+      // Should only have fired once (at 2s for the second interval)
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith("sess-2");
+
+      buffer.stopAutoSave();
+    });
+
+    it("stopAutoSave is safe to call when no interval is running", () => {
+      expect(() => buffer.stopAutoSave()).not.toThrow();
+    });
+  });
+
+  describe("setupBeforeUnload / teardownBeforeUnload", () => {
+    let addSpy: ReturnType<typeof vi.spyOn>;
+    let removeSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      addSpy = vi.spyOn(window, "addEventListener");
+      removeSpy = vi.spyOn(window, "removeEventListener");
+      vi.stubGlobal("localStorage", { setItem: vi.fn(), getItem: vi.fn() });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    });
+
+    it("registers a beforeunload listener that saves to storage", () => {
+      buffer.info("test", "some data");
+      buffer.setupBeforeUnload("sess-1");
+
+      expect(addSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+
+      // Simulate the beforeunload event
+      const handler = addSpy.mock.calls.find(
+        (c: unknown[]) => c[0] === "beforeunload"
+      )?.[1] as EventListener;
+      expect(handler).toBeDefined();
+
+      const saveSpy = vi.spyOn(buffer, "saveToLocalStorage");
+      handler(new Event("beforeunload"));
+      expect(saveSpy).toHaveBeenCalledWith("sess-1");
+    });
+
+    it("teardownBeforeUnload removes the listener", () => {
+      buffer.setupBeforeUnload("sess-1");
+      buffer.teardownBeforeUnload();
+
+      expect(removeSpy).toHaveBeenCalledWith(
+        "beforeunload",
+        expect.any(Function)
+      );
+    });
+
+    it("teardownBeforeUnload is safe to call without setup", () => {
+      expect(() => buffer.teardownBeforeUnload()).not.toThrow();
+    });
+
+    it("calling setupBeforeUnload twice replaces the listener", () => {
+      buffer.setupBeforeUnload("sess-1");
+      buffer.setupBeforeUnload("sess-2");
+
+      // Should have removed the first listener before adding the second
+      expect(removeSpy).toHaveBeenCalledTimes(1);
+      expect(addSpy).toHaveBeenCalledTimes(2);
+
+      buffer.teardownBeforeUnload();
+    });
   });
 });
