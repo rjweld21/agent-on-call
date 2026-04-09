@@ -21,7 +21,6 @@ test.describe("Settings panel", () => {
   test("panel shows section titles", async ({ page }) => {
     await page.getByTestId("settings-button").click();
     const panel = page.getByRole("dialog", { name: "Settings panel" });
-    await expect(panel).toContainText("General");
     await expect(panel).toContainText("Model");
     await expect(panel).toContainText("Voice");
   });

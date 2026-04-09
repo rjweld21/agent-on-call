@@ -4,11 +4,10 @@ import {
   LiveKitRoom,
   useLocalParticipant,
   useParticipants,
-  AudioVisualizer,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { useCallback, useState, useEffect, useRef } from "react";
-import { Track } from "livekit-client";
+import Link from "next/link";
 
 function AudioTest() {
   const { localParticipant, microphoneTrack } = useLocalParticipant();
@@ -61,12 +60,14 @@ function AudioTest() {
     };
 
     draw();
-    setIsPublishing(true);
+    // Defer state updates to avoid synchronous setState in effect body
+    const publishId = requestAnimationFrame(() => setIsPublishing(true));
 
     return () => {
+      cancelAnimationFrame(publishId);
       cancelAnimationFrame(animFrameRef.current);
       audioCtx.close();
-      setIsPublishing(false);
+      requestAnimationFrame(() => setIsPublishing(false));
     };
   }, [microphoneTrack?.track?.mediaStream]);
 
@@ -202,7 +203,7 @@ function AudioTest() {
         </ul>
       </div>
 
-      <a
+      <Link
         href="/"
         style={{
           color: "#6366f1",
@@ -211,7 +212,7 @@ function AudioTest() {
         }}
       >
         Back to main app
-      </a>
+      </Link>
     </div>
   );
 }

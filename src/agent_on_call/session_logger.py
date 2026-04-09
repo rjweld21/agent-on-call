@@ -13,6 +13,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class SessionLogger:
 
     def __init__(self, session_dir: str = DEFAULT_SESSION_DIR):
         self._session_dir = session_dir
-        self._file = None
+        self._file: Any = None
         self._filepath: str | None = None
         self._closed = False
 
