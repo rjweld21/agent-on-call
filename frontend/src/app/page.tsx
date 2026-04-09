@@ -140,19 +140,27 @@ function AgentInterface() {
   const sessionLogRef = useRef(new SessionLogBuffer());
 
   // Log connection event on mount + intercept console.error
+  // Start auto-save + beforeunload on connect, stop on disconnect
   useEffect(() => {
-    sessionLogRef.current.info("connection", "AgentInterface mounted — connected to room");
+    const log = sessionLogRef.current;
+    const sessionId = room.name || `session-${Date.now()}`;
+
+    log.info("connection", "AgentInterface mounted — connected to room");
+    log.startAutoSave(30000, sessionId);
+    log.setupBeforeUnload(sessionId);
+
     const origError = console.error;
     console.error = (...args: unknown[]) => {
-      sessionLogRef.current.error("frontend", args.map(String).join(" "));
+      log.error("frontend", args.map(String).join(" "));
       origError.apply(console, args);
     };
     return () => {
       console.error = origError;
-      sessionLogRef.current.info("connection", "AgentInterface unmounting — disconnecting");
+      log.info("connection", "AgentInterface unmounting — disconnecting");
+      log.stopAutoSave();
+      log.teardownBeforeUnload();
       // Save session log to localStorage on disconnect
-      const sessionId = room.name || `session-${Date.now()}`;
-      sessionLogRef.current.saveToLocalStorage(sessionId);
+      log.saveToLocalStorage(sessionId);
     };
   }, [room.name]);
 
