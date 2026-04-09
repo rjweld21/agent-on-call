@@ -48,7 +48,7 @@ def _build_llm(model: str | None = None):
 
         return openai.LLM(
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            api_key=os.environ.get("OPENAI_API_KEY"),
+            api_key=os.environ.get("OPENAI_API_KEY"),  # type: ignore[arg-type]
         )
     else:
         from livekit.plugins import anthropic as anthropic_plugin
@@ -280,10 +280,10 @@ def _build_session(model: str | None, tts_enabled: bool = True) -> AgentSession:
     return AgentSession(
         stt=deepgram.STT(
             model="nova-3",
-            api_key=os.environ.get("DEEPGRAM_API_KEY"),
+            api_key=os.environ.get("DEEPGRAM_API_KEY"),  # type: ignore[arg-type]
         ),
         llm=_build_llm(model=model),
-        tts=tts,
+        tts=tts,  # type: ignore[arg-type]
         vad=silero.VAD.load(
             min_speech_duration=vad_cfg.min_speech_duration,
             min_silence_duration=vad_cfg.min_silence_duration,

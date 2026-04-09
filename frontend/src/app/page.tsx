@@ -37,11 +37,13 @@ function MicMonitor() {
 
   useEffect(() => {
     if (!microphoneTrack?.track?.mediaStream) {
-      setMicActive(false);
-      return;
+      // Defer state update to avoid synchronous setState in effect body
+      const id = requestAnimationFrame(() => setMicActive(false));
+      return () => cancelAnimationFrame(id);
     }
 
-    setMicActive(true);
+    // Defer state update to avoid synchronous setState in effect body
+    const micActiveId = requestAnimationFrame(() => setMicActive(true));
     const audioCtx = new AudioContext();
     const source = audioCtx.createMediaStreamSource(microphoneTrack.track.mediaStream);
     const analyser = audioCtx.createAnalyser();
@@ -79,6 +81,7 @@ function MicMonitor() {
     draw();
 
     return () => {
+      cancelAnimationFrame(micActiveId);
       cancelAnimationFrame(animFrameRef.current);
       audioCtx.close();
     };
