@@ -4,5 +4,5 @@ orchestrator-state.json
 # Session transcripts (contain user conversations — never commit)
 transcripts/
 
-# Sessions (future — may want to track these)
-# sessions/
+# Session debug logs (contain runtime data — never commit)
+sessions/
