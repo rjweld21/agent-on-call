@@ -1,7 +1,6 @@
 """Tests for main.py — TTS health check and session builder."""
 
 import os
-import pytest
 from unittest.mock import patch, MagicMock
 
 import httpx
@@ -52,9 +51,11 @@ class TestCheckTtsAvailable:
 
     def test_returns_true_when_key_valid(self):
         """Key present and both API endpoints return success — TTS is available."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key_123"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)), \
-             patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(200)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key_123"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)),
+            patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(200)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -63,8 +64,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_auth_failed_on_401(self):
         """Key present but invalid — API returns 401."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_invalid"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(401)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_invalid"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(401)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -73,8 +76,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_auth_failed_on_403(self):
         """Key present but forbidden — API returns 403."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_forbidden"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(403)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_forbidden"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(403)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -83,8 +88,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_no_credits_on_402(self):
         """Key present but account has no credits — API returns 402."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_expired"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(402)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_expired"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(402)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -93,8 +100,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_network_error_on_timeout(self):
         """API is unreachable — httpx.TimeoutException."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", side_effect=httpx.TimeoutException("timeout")):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", side_effect=httpx.TimeoutException("timeout")),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -103,8 +112,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_network_error_on_connect_error(self):
         """API is unreachable — httpx.ConnectError."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", side_effect=httpx.ConnectError("refused")):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", side_effect=httpx.ConnectError("refused")),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -113,8 +124,10 @@ class TestCheckTtsAvailable:
 
     def test_returns_network_error_on_5xx(self):
         """API returns a server error — should report network_error."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(500)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(500)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -125,9 +138,11 @@ class TestCheckTtsAvailable:
         """Verify the health check sends the correct API key and version headers."""
         mock_get = MagicMock(return_value=_mock_httpx_response(200))
         mock_post = MagicMock(return_value=_mock_httpx_response(200))
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_test_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", mock_get), \
-             patch("agent_on_call.main.httpx.post", mock_post):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_test_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", mock_get),
+            patch("agent_on_call.main.httpx.post", mock_post),
+        ):
             from agent_on_call.main import _check_tts_available
 
             _check_tts_available()
@@ -138,9 +153,11 @@ class TestCheckTtsAvailable:
 
     def test_returns_no_credits_when_tts_endpoint_returns_402(self):
         """Voices endpoint returns 200 but TTS endpoint returns 402 — no credits."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)), \
-             patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(402)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)),
+            patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(402)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -149,9 +166,11 @@ class TestCheckTtsAvailable:
 
     def test_returns_true_when_tts_endpoint_returns_400(self):
         """Voices 200 + TTS 400 (bad request body) means auth works and credits exist."""
-        with patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False), \
-             patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)), \
-             patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(400)):
+        with (
+            patch.dict(os.environ, {"CARTESIA_API_KEY": "sk_cart_real_key"}, clear=False),
+            patch("agent_on_call.main.httpx.get", return_value=_mock_httpx_response(200)),
+            patch("agent_on_call.main.httpx.post", return_value=_mock_httpx_response(400)),
+        ):
             from agent_on_call.main import _check_tts_available
 
             available, reason = _check_tts_available()
@@ -161,10 +180,12 @@ class TestCheckTtsAvailable:
 
 class TestBuildSession:
     def test_build_session_with_tts_enabled(self):
-        with patch("agent_on_call.main.deepgram") as mock_dg, \
-             patch("agent_on_call.main.cartesia") as mock_cart, \
-             patch("agent_on_call.main.silero") as mock_silero, \
-             patch("agent_on_call.main._build_llm") as mock_llm:
+        with (
+            patch("agent_on_call.main.deepgram") as mock_dg,
+            patch("agent_on_call.main.cartesia") as mock_cart,
+            patch("agent_on_call.main.silero") as mock_silero,
+            patch("agent_on_call.main._build_llm") as mock_llm,
+        ):
             mock_silero.VAD.load.return_value = MagicMock()
             mock_dg.STT.return_value = MagicMock()
             mock_cart.TTS.return_value = MagicMock()
@@ -178,10 +199,12 @@ class TestBuildSession:
             assert session is not None
 
     def test_build_session_with_tts_disabled(self):
-        with patch("agent_on_call.main.deepgram") as mock_dg, \
-             patch("agent_on_call.main.cartesia") as mock_cart, \
-             patch("agent_on_call.main.silero") as mock_silero, \
-             patch("agent_on_call.main._build_llm") as mock_llm:
+        with (
+            patch("agent_on_call.main.deepgram") as mock_dg,
+            patch("agent_on_call.main.cartesia") as mock_cart,
+            patch("agent_on_call.main.silero") as mock_silero,
+            patch("agent_on_call.main._build_llm") as mock_llm,
+        ):
             mock_silero.VAD.load.return_value = MagicMock()
             mock_dg.STT.return_value = MagicMock()
             mock_llm.return_value = MagicMock()

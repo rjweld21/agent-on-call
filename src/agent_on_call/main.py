@@ -13,7 +13,9 @@ from livekit.agents import AgentServer, AgentSession
 from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent, ORCHESTRATOR_INSTRUCTIONS
-from agent_on_call.prompt_builder import PromptBuilder, VERBOSITY_PROMPTS, TEXT_MODE_INSTRUCTION
+from agent_on_call.prompt_builder import PromptBuilder
+from agent_on_call.prompt_builder import TEXT_MODE_INSTRUCTION  # noqa: F401
+from agent_on_call.prompt_builder import VERBOSITY_PROMPTS  # noqa: F401
 from agent_on_call.session_logger import SessionLogger
 from agent_on_call.transcript import SessionTranscript
 from agent_on_call.turn_taking import DEFAULT_VAD_CONFIG, DEFAULT_TURN_TAKING_CONFIG
@@ -81,13 +83,6 @@ def _build_llm(model: str | None = None):
             return anthropic_plugin.LLM(model=effective_model, api_key=effective_key)
 
 
-
-
-# VERBOSITY_PROMPTS is now in prompt_builder.py — re-exported here for backward compatibility
-# from agent_on_call.prompt_builder import VERBOSITY_PROMPTS  # already imported above
-
-
-
 def _parse_settings_update(data: bytes) -> dict[str, Any] | None:
     """Parse a settings_update data channel message.
 
@@ -142,13 +137,57 @@ def _get_participant_metadata(ctx: agents.JobContext) -> dict:
     return {}
 
 
+def _get_cartesia_api_key() -> str | None:
+    """Return the Cartesia API key if set and not a placeholder."""
+    api_key = os.environ.get("CARTESIA_API_KEY")
+    if not api_key or not api_key.strip():
+        return None
+    placeholder_values = {
+        "placeholder",
+        "your_cartesia_api_key_here",
+        "sk_test",
+        "",
+    }
+    if api_key.strip().lower() in placeholder_values:
+        return None
+    return api_key.strip()
+
+
+def _check_cartesia_status(
+    resp_status: int,
+    label: str,
+    strict: bool = True,
+) -> tuple[bool, str] | None:
+    """Map an HTTP status code to a TTS failure reason.
+
+    Returns (False, reason) if the status indicates failure, or None
+    if the status is OK and checking should continue.
+
+    When strict=True, any 4xx status (besides 401/402/403) is treated
+    as a network error. When strict=False, only auth/credit errors
+    are flagged (used for the TTS probe where 400 means "auth OK").
+    """
+    if resp_status in (401, 403):
+        logger.warning("Cartesia %s auth failed (HTTP %d)", label, resp_status)
+        return (False, "auth_failed")
+    if resp_status == 402:
+        logger.warning("Cartesia %s has no credits (HTTP 402)", label)
+        return (False, "no_credits")
+    if strict and resp_status >= 400:
+        logger.warning(
+            "Cartesia %s returned HTTP %d during health check",
+            label,
+            resp_status,
+        )
+        return (False, "network_error")
+    return None
+
+
 def _check_tts_available() -> tuple[bool, str]:
     """Check if TTS is available by validating the Cartesia API key.
 
-    Makes HTTP requests to Cartesia's voices endpoint AND the TTS SSE
-    endpoint to verify the key is valid and the account has synthesis credits.
-    The voices endpoint alone may return 200 even when the account has no
-    credits for synthesis, so we also probe the TTS endpoint.
+    Makes HTTP requests to Cartesia's voices endpoint AND the TTS
+    endpoint to verify the key is valid and the account has credits.
 
     Returns (available, reason) where reason is one of:
     - "" (empty string) if available
@@ -157,17 +196,12 @@ def _check_tts_available() -> tuple[bool, str]:
     - "no_credits" if account has no credits (402)
     - "network_error" if the API is unreachable
     """
-    api_key = os.environ.get("CARTESIA_API_KEY")
-    if not api_key or not api_key.strip():
-        return (False, "no_key")
-
-    # Check for placeholder values
-    placeholder_values = {"placeholder", "your_cartesia_api_key_here", "sk_test", ""}
-    if api_key.strip().lower() in placeholder_values:
+    api_key = _get_cartesia_api_key()
+    if not api_key:
         return (False, "no_key")
 
     headers = {
-        "X-API-Key": api_key.strip(),
+        "X-API-Key": api_key,
         "Cartesia-Version": "2024-06-10",
     }
 
@@ -178,23 +212,14 @@ def _check_tts_available() -> tuple[bool, str]:
             headers=headers,
             timeout=5.0,
         )
-        if resp.status_code in (401, 403):
-            logger.warning("Cartesia API key is invalid (HTTP %d)", resp.status_code)
-            return (False, "auth_failed")
-        if resp.status_code == 402:
-            logger.warning("Cartesia account has no credits (HTTP 402)")
-            return (False, "no_credits")
-        if resp.status_code >= 400:
-            logger.warning("Cartesia API returned HTTP %d during health check", resp.status_code)
-            return (False, "network_error")
+        failure = _check_cartesia_status(resp.status_code, "API")
+        if failure:
+            return failure
     except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as exc:
-        logger.warning("Could not reach Cartesia API for health check: %s", exc)
+        logger.warning("Could not reach Cartesia API: %s", exc)
         return (False, "network_error")
 
-    # Second: probe the TTS endpoint to verify synthesis credits.
-    # Send a minimal TTS request — the server will reject it with 402 if no
-    # credits remain, or 400/422 if the request body is invalid (which means
-    # auth passed and credits are available).
+    # Second: probe TTS endpoint to verify synthesis credits.
     try:
         tts_resp = httpx.post(
             "https://api.cartesia.ai/tts/bytes",
@@ -202,20 +227,27 @@ def _check_tts_available() -> tuple[bool, str]:
             json={
                 "transcript": "test",
                 "model_id": "sonic-2",
-                "voice": {"mode": "id", "id": "a0e99841-438c-4a64-b679-ae501e7d6091"},
-                "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 8000},
+                "voice": {
+                    "mode": "id",
+                    "id": "a0e99841-438c-4a64-b679-ae501e7d6091",
+                },
+                "output_format": {
+                    "container": "raw",
+                    "encoding": "pcm_s16le",
+                    "sample_rate": 8000,
+                },
             },
             timeout=5.0,
         )
-        if tts_resp.status_code in (401, 403):
-            logger.warning("Cartesia TTS auth failed (HTTP %d)", tts_resp.status_code)
-            return (False, "auth_failed")
-        if tts_resp.status_code == 402:
-            logger.warning("Cartesia account has no TTS credits (HTTP 402)")
-            return (False, "no_credits")
-        # 200 or 4xx (bad request) both mean the key works and has credits
+        failure = _check_cartesia_status(
+            tts_resp.status_code,
+            "TTS",
+            strict=False,
+        )
+        if failure:
+            return failure
     except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as exc:
-        logger.warning("Could not reach Cartesia TTS endpoint for health check: %s", exc)
+        logger.warning("Could not reach Cartesia TTS endpoint: %s", exc)
         return (False, "network_error")
 
     return (True, "")
@@ -227,12 +259,6 @@ TTS_STATUS_MESSAGES = {
     "no_credits": ("Voice responses unavailable. " "Cartesia account has no credits remaining."),
     "network_error": ("Voice responses unavailable. " "Could not reach Cartesia API."),
 }
-
-
-
-# TEXT_MODE_INSTRUCTION is now in prompt_builder.py — re-exported here for backward compatibility
-# from agent_on_call.prompt_builder import TEXT_MODE_INSTRUCTION  # already imported above
-
 
 
 def _build_session(model: str | None, tts_enabled: bool = True) -> AgentSession:
@@ -332,8 +358,163 @@ async def _apply_settings_update(
     return current_model, current_verbosity, changed
 
 
+def _reason_from_status(status_code: int) -> str:
+    """Map an HTTP status code to a TTS failure reason string."""
+    if status_code in (401, 403):
+        return "auth_failed"
+    if status_code == 402:
+        return "no_credits"
+    return "network_error"
+
+
+def _detect_tts_error(error) -> tuple[bool, str]:
+    """Detect if an error is TTS-related and determine the reason.
+
+    Returns (is_tts_error, reason).
+    """
+    # Check if it's a LiveKit TTSError wrapper
+    try:
+        from livekit.agents import tts as tts_module
+
+        if isinstance(error, tts_module.TTSError):
+            err = error.error
+            code = getattr(err, "status_code", 0)
+            return (True, _reason_from_status(code))
+    except (ImportError, AttributeError):
+        pass
+
+    # Check if the error string relates to TTS/Cartesia
+    error_str = str(error).lower()
+    if "cartesia" in error_str or "tts" in error_str:
+        return (True, _reason_from_status_str(error_str))
+
+    # Check for WSServerHandshakeError with status codes
+    status = getattr(error, "status", None)
+    if status in (401, 402, 403):
+        return (True, _reason_from_status(status))
+
+    return (False, "network_error")
+
+
+def _reason_from_status_str(error_str: str) -> str:
+    """Determine TTS failure reason from an error string."""
+    if "402" in error_str:
+        return "no_credits"
+    if "401" in error_str or "403" in error_str:
+        return "auth_failed"
+    return "network_error"
+
+
+def _is_tts_greeting_error(error_str: str) -> bool:
+    """Check if a greeting error is TTS-related."""
+    tts_keywords = ("cartesia", "tts", "402", "handshake")
+    return any(kw in error_str for kw in tts_keywords)
+
+
+def _setup_transcript(ctx, session, session_log):
+    """Set up transcript tracking for a session.
+
+    Returns (transcript, transcript_dir).
+    """
+    transcript = SessionTranscript(session_id=ctx.room.name or "unknown")
+    transcript.add_participant(
+        ctx.room.local_participant.identity,
+        ctx.room.local_participant.name or "Orchestrator",
+    )
+    for p in ctx.room.remote_participants.values():
+        transcript.add_participant(p.identity, p.name or p.identity)
+
+    transcript_dir = os.path.join(".aoc", "transcripts")
+
+    @session.on("user_input_transcription")
+    def _on_user_transcription(event):
+        if hasattr(event, "text") and event.text:
+            transcript.add_entry(
+                speaker="user",
+                content=event.text,
+                entry_type="speech",
+            )
+            session_log.debug("transcript", f"User: {event.text[:200]}")
+
+    @session.on("agent_speech_committed")
+    def _on_agent_speech(event):
+        if hasattr(event, "text") and event.text:
+            transcript.add_entry(
+                speaker="agent",
+                content=event.text,
+                entry_type="speech",
+            )
+            session_log.debug("transcript", f"Agent: {event.text[:200]}")
+
+    async def _save_transcript():
+        """Save transcript on session end."""
+        transcript.end_session()
+        try:
+            filepath = transcript.save(transcript_dir)
+            logger.info("Session transcript saved to %s", filepath)
+        except Exception as e:
+            logger.error("Failed to save transcript: %s", e)
+
+    ctx.add_shutdown_callback(_save_transcript)
+    return transcript
+
+
+async def _notify_tts_disabled(room, reason: str):
+    """Send a tts_status message to the frontend via data channel."""
+    tts_status_msg = json.dumps(
+        {
+            "type": "tts_status",
+            "available": False,
+            "reason": reason,
+        }
+    )
+    try:
+        await room.local_participant.publish_data(
+            tts_status_msg.encode(),
+            topic="tts_status",
+        )
+    except Exception as e:
+        logger.warning("Failed to send TTS status: %s", e)
+
+
+def _make_tts_runtime_disabler(session, agent, prompt_builder, room):
+    """Create a closure that disables TTS at runtime.
+
+    Returns (disable_fn, is_disabled_fn) where disable_fn(reason)
+    disables TTS and is_disabled_fn() returns whether TTS was disabled.
+    """
+    state = {"disabled": False}
+
+    def disable(reason: str):
+        if state["disabled"]:
+            return
+        logger.warning(
+            "TTS failed at runtime (reason: %s) — disabling TTS",
+            reason,
+        )
+        state["disabled"] = True
+        session._tts = None
+        try:
+            session.output.set_audio_enabled(False)
+        except Exception as e:
+            logger.warning("Failed to disable audio output: %s", e)
+
+        async def _update_tts_instructions():
+            prompt_builder.set_tts_available(False)
+            new_instr = prompt_builder.build()
+            await agent.update_instructions(new_instr)
+
+        asyncio.create_task(_update_tts_instructions())
+        asyncio.create_task(_notify_tts_disabled(room, reason))
+
+    def is_disabled():
+        return state["disabled"]
+
+    return disable, is_disabled
+
+
 @server.rtc_session(agent_name="orchestrator")
-async def orchestrator_session(ctx: agents.JobContext):
+async def orchestrator_session(ctx: agents.JobContext):  # noqa: C901
     # Read preferences from participant metadata (set by frontend via token API)
     metadata = _get_participant_metadata(ctx)
     selected_model = metadata.get("model")
@@ -344,7 +525,10 @@ async def orchestrator_session(ctx: agents.JobContext):
     # Check TTS availability
     tts_available, tts_reason = _check_tts_available()
     if not tts_available:
-        logger.warning("TTS unavailable (reason: %s) — running in text-only mode", tts_reason)
+        logger.warning(
+            "TTS unavailable (reason: %s) — text-only mode",
+            tts_reason,
+        )
 
     # Build agent with PromptBuilder-composed instructions
     agent = OrchestratorAgent()
@@ -352,222 +536,102 @@ async def orchestrator_session(ctx: agents.JobContext):
     prompt_builder.set_base_instructions(ORCHESTRATOR_INSTRUCTIONS)
     prompt_builder.set_verbosity(verbosity)
     prompt_builder.set_tts_available(tts_available)
-    # Set initial instructions before session starts (agent._activity is None,
-    # so update_instructions() would just set _instructions synchronously anyway)
     agent._instructions = prompt_builder.build()
 
     session = _build_session(selected_model, tts_enabled=tts_available)
-
     await session.start(room=ctx.room, agent=agent)
 
-    # When TTS is unavailable, disable audio output so the SDK doesn't
-    # attempt TTS inference (which raises RuntimeError for missing tts_node).
     if not tts_available:
         session.output.set_audio_enabled(False)
 
-    # Set room reference for action event publishing
     agent.set_room(ctx.room)
-
-    # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
 
     # --- Session debug logger ---
     session_log = SessionLogger()
     session_log.start(ctx.room.name or "unknown")
-    session_log.info("session", f"Model={selected_model}, verbosity={verbosity}, tts={tts_available}")
+    session_log.info(
+        "session",
+        f"Model={selected_model}, verbosity={verbosity}, tts={tts_available}",
+    )
 
     async def _close_session_log():
-        """Close session log on shutdown."""
         session_log.close()
         logger.info("Session log saved to %s", session_log.filepath)
 
     ctx.add_shutdown_callback(_close_session_log)
 
     # --- Transcript tracking ---
-    transcript = SessionTranscript(session_id=ctx.room.name or "unknown")
-    transcript.add_participant(
-        ctx.room.local_participant.identity,
-        ctx.room.local_participant.name or "Orchestrator",
-    )
-    for p in ctx.room.remote_participants.values():
-        transcript.add_participant(p.identity, p.name or p.identity)
-
-    TRANSCRIPT_DIR = os.path.join(".aoc", "transcripts")
-
-    @session.on("user_input_transcription")
-    def _on_user_transcription(event):
-        if hasattr(event, "text") and event.text:
-            transcript.add_entry(speaker="user", content=event.text, entry_type="speech")
-            session_log.debug("transcript", f"User: {event.text[:200]}")
-
-    @session.on("agent_speech_committed")
-    def _on_agent_speech(event):
-        if hasattr(event, "text") and event.text:
-            transcript.add_entry(speaker="agent", content=event.text, entry_type="speech")
-            session_log.debug("transcript", f"Agent: {event.text[:200]}")
-
-    async def _save_transcript():
-        """Save transcript on session end."""
-        transcript.end_session()
-        try:
-            filepath = transcript.save(TRANSCRIPT_DIR)
-            logger.info("Session transcript saved to %s", filepath)
-        except Exception as e:
-            logger.error("Failed to save transcript: %s", e)
-
-    ctx.add_shutdown_callback(_save_transcript)
-
-    async def _notify_tts_disabled(reason: str):
-        """Send a tts_status message to the frontend via data channel."""
-        tts_status_msg = json.dumps(
-            {
-                "type": "tts_status",
-                "available": False,
-                "reason": reason,
-            }
-        )
-        try:
-            await ctx.room.local_participant.publish_data(
-                tts_status_msg.encode(),
-                topic="tts_status",
-            )
-        except Exception as e:
-            logger.warning("Failed to send TTS status: %s", e)
+    _setup_transcript(ctx, session, session_log)
 
     # Notify frontend of TTS status if unavailable
     if not tts_available:
-        await _notify_tts_disabled(tts_reason)
+        await _notify_tts_disabled(ctx.room, tts_reason)
 
     # --- Runtime TTS error handling ---
-    # If TTS fails mid-session (e.g. credits run out), disable it and continue
-    # in text-only mode rather than crashing the session.
-    tts_disabled_at_runtime = False
-
-    def _disable_tts_runtime(reason: str):
-        """Disable TTS for this session and notify the frontend."""
-        nonlocal tts_disabled_at_runtime
-        if tts_disabled_at_runtime:
-            return
-        logger.warning(
-            "TTS failed at runtime (reason: %s) — disabling TTS for this session",
-            reason,
-        )
-        tts_disabled_at_runtime = True
-
-        # Remove TTS from the session and disable audio output so the SDK
-        # doesn't attempt TTS inference (which raises RuntimeError).
-        session._tts = None
-        try:
-            session.output.set_audio_enabled(False)
-        except Exception as e:
-            logger.warning("Failed to disable audio output: %s", e)
-
-        # Update agent instructions to reflect text-only mode
-        # Schedule async update_instructions since this callback is synchronous
-        async def _update_tts_instructions():
-            prompt_builder.set_tts_available(False)
-            new_instr = prompt_builder.build()
-            await agent.update_instructions(new_instr)
-            logger.debug("Instructions updated for text-only mode")
-
-        asyncio.create_task(_update_tts_instructions())
-        asyncio.create_task(_notify_tts_disabled(reason))
+    disable_tts, is_tts_disabled = _make_tts_runtime_disabler(
+        session,
+        agent,
+        prompt_builder,
+        ctx.room,
+    )
 
     @session.on("error")
     def _on_session_error(error):
         session_log.error("session", f"Session error: {error}")
-        if tts_disabled_at_runtime:
+        if is_tts_disabled():
             return
-
-        # Detect TTS errors — check both the SDK TTSError and raw exceptions
-        reason = "network_error"
-        is_tts_error = False
-
-        # Check if it's a LiveKit TTSError wrapper
-        try:
-            from livekit.agents import tts as tts_module
-
-            if isinstance(error, tts_module.TTSError):
-                is_tts_error = True
-                err = error.error
-                if hasattr(err, "status_code"):
-                    if err.status_code in (401, 403):
-                        reason = "auth_failed"
-                    elif err.status_code == 402:
-                        reason = "no_credits"
-        except (ImportError, AttributeError):
-            pass
-
-        # Check if the error itself (or its string) relates to TTS/Cartesia
-        if not is_tts_error:
-            error_str = str(error).lower()
-            if "cartesia" in error_str or "tts" in error_str:
-                is_tts_error = True
-                if "402" in error_str:
-                    reason = "no_credits"
-                elif "401" in error_str or "403" in error_str:
-                    reason = "auth_failed"
-
-        # Also check for WSServerHandshakeError with status codes
-        if not is_tts_error:
-            status = getattr(error, "status", None)
-            if status in (401, 402, 403):
-                is_tts_error = True
-                if status in (401, 403):
-                    reason = "auth_failed"
-                elif status == 402:
-                    reason = "no_credits"
-
-        if is_tts_error:
-            session_log.warn("tts", f"TTS error detected, disabling — reason={reason}")
-            _disable_tts_runtime(reason)
+        is_tts_err, reason = _detect_tts_error(error)
+        if is_tts_err:
+            session_log.warn(
+                "tts",
+                f"TTS error detected, disabling — reason={reason}",
+            )
+            disable_tts(reason)
 
     # --- Mid-session settings via data channel ---
     async def _handle_data_received(data_packet: rtc.DataPacket):
-        """Handle settings updates sent by the frontend via data channel."""
         nonlocal selected_model, verbosity
-
         update = _parse_settings_update(data_packet.data)
         if update is None:
-            # Log non-settings data channel messages
             try:
                 msg = json.loads(data_packet.data)
-                session_log.debug("data_channel", f"Received: type={msg.get('type', 'unknown')}")
+                session_log.debug(
+                    "data_channel",
+                    f"Received: type={msg.get('type', 'unknown')}",
+                )
             except (json.JSONDecodeError, UnicodeDecodeError):
                 session_log.debug("data_channel", "Received non-JSON data")
             return
 
         session_log.info("data_channel", f"Settings update: {update}")
         selected_model, verbosity, _ = await _apply_settings_update(
-            update, agent, session, ctx.room, selected_model, verbosity,
+            update,
+            agent,
+            session,
+            ctx.room,
+            selected_model,
+            verbosity,
             prompt_builder=prompt_builder,
         )
 
     def _on_data_received(data_packet: rtc.DataPacket):
-        """Sync wrapper — LiveKit requires .on() callbacks to be synchronous."""
         asyncio.create_task(_handle_data_received(data_packet))
 
     ctx.room.on("data_received", _on_data_received)
 
-    greeting_instructions = (
-        "Greet the user. Introduce yourself as the Agent On Call " "orchestrator. Ask how you can help today."
-    )
+    greeting = "Greet the user. Introduce yourself as the Agent On Call " "orchestrator. Ask how you can help today."
     try:
-        await session.generate_reply(instructions=greeting_instructions)
+        await session.generate_reply(instructions=greeting)
     except Exception as e:
-        error_str = str(e).lower()
         logger.error("generate_reply failed: %s", e)
-
-        # If TTS-related, disable TTS and retry without voice
-        if "cartesia" in error_str or "tts" in error_str or "402" in error_str or "handshake" in error_str:
-            logger.warning("TTS failure during greeting — rebuilding session without TTS")
-            _disable_tts_runtime("no_credits")
-
-            # generate_reply should now work without TTS since _tts is None
+        if _is_tts_greeting_error(str(e).lower()):
+            logger.warning("TTS failure during greeting — disabling TTS")
+            disable_tts("no_credits")
             try:
-                await session.generate_reply(instructions=greeting_instructions)
+                await session.generate_reply(instructions=greeting)
             except Exception as retry_err:
-                logger.error("generate_reply retry also failed: %s", retry_err)
+                logger.error("generate_reply retry failed: %s", retry_err)
         else:
             logger.error("Non-TTS error in generate_reply — not retrying")
 

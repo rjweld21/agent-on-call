@@ -147,15 +147,12 @@ class TestSourceCodeSync:
         source = main_path.read_text()
 
         # The sync wrapper registered with room.on() must NOT be async
-        assert 'ctx.room.on("data_received", _on_data_received)' in source, (
-            "Expected room.on() registration for _on_data_received"
-        )
+        assert (
+            'ctx.room.on("data_received", _on_data_received)' in source
+        ), "Expected room.on() registration for _on_data_received"
         # _on_data_received itself must be sync (def, not async def)
-        assert "def _on_data_received(data_packet" in source, (
-            "Could not find sync 'def _on_data_received' in main.py"
-        )
+        assert "def _on_data_received(data_packet" in source, "Could not find sync 'def _on_data_received' in main.py"
         # It should NOT be 'async def _on_data_received'
         assert "async def _on_data_received" not in source, (
-            "Found 'async def _on_data_received' in main.py — "
-            "this will crash with LiveKit SDK 1.5.1. Use a sync wrapper."
+            "Found 'async def _on_data_received' in main.py — " "this will crash with LiveKit SDK 1.5.1. Use a sync wrapper."
         )

@@ -1,7 +1,5 @@
 """Tests for PromptBuilder."""
 
-import pytest
-
 
 class TestPromptBuilder:
     """Test PromptBuilder section composition and token budget."""

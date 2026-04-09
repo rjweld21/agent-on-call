@@ -1,6 +1,5 @@
 """Tests for web search and fetch tools."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

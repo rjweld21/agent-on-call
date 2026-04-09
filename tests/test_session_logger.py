@@ -4,11 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
-from datetime import datetime, timezone
-from unittest.mock import patch
-
-import pytest
 
 from agent_on_call.session_logger import SessionLogger, LOG_FORMAT_RE, rotate_session_logs
 
@@ -44,7 +39,7 @@ class TestSessionLogger:
         logger.close()
 
         content = open(logger.filepath).read()
-        lines = [l for l in content.strip().split("\n") if l.strip()]
+        lines = [line for line in content.strip().split("\n") if line.strip()]
         # Should have at least the "Session started" entry
         assert any("Session started" in line for line in lines)
         for line in lines:

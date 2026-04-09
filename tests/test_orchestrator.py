@@ -103,9 +103,7 @@ class TestEmitAction:
             )
 
             mock_room.local_participant.publish_data.assert_called_once()
-            payload = json.loads(
-                mock_room.local_participant.publish_data.call_args[0][0].decode()
-            )
+            payload = json.loads(mock_room.local_participant.publish_data.call_args[0][0].decode())
             assert payload["type"] == "command_output"
             assert payload["id"] == "test-cmd-1"
             assert payload["command"] == "ls -la"
@@ -134,9 +132,7 @@ class TestEmitAction:
                 tool="git_status",
             )
 
-            payload = json.loads(
-                mock_room.local_participant.publish_data.call_args[0][0].decode()
-            )
+            payload = json.loads(mock_room.local_participant.publish_data.call_args[0][0].decode())
             assert payload["tool"] == "git_status"
             assert "timestamp" in payload
             # Timestamp should be ISO format
@@ -188,9 +184,7 @@ class TestEmitAction:
                 done=True,
             )
 
-            payload = json.loads(
-                mock_room.local_participant.publish_data.call_args[0][0].decode()
-            )
+            payload = json.loads(mock_room.local_participant.publish_data.call_args[0][0].decode())
             assert "truncated" in payload["output"]
             assert len(payload["output"]) < 200 * 1024
 
@@ -218,14 +212,9 @@ class TestEmitAction:
             mock_room.local_participant.publish_data = AsyncMock()
             agent.set_room(mock_room)
 
-            action_id = await agent._emit_action(
-                "result", "exec_command", "done",
-                action_id="custom-id-123"
-            )
+            action_id = await agent._emit_action("result", "exec_command", "done", action_id="custom-id-123")
             assert action_id == "custom-id-123"
-            payload = json.loads(
-                mock_room.local_participant.publish_data.call_args[0][0].decode()
-            )
+            payload = json.loads(mock_room.local_participant.publish_data.call_args[0][0].decode())
             assert payload["action"]["id"] == "custom-id-123"
 
 
@@ -836,8 +825,7 @@ class TestTerminalWiring:
             calls = mock_room.local_participant.publish_data.call_args_list
             # Find command_output message
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "git_status should emit command_output"
             assert cmd_outputs[0]["command"] == "git status"
@@ -868,8 +856,7 @@ class TestTerminalWiring:
 
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "git_commit should emit command_output"
             assert "git" in cmd_outputs[0]["command"]
@@ -896,8 +883,7 @@ class TestTerminalWiring:
 
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "git_push should emit command_output"
             assert "git push" in cmd_outputs[0]["command"]
@@ -919,8 +905,7 @@ class TestTerminalWiring:
 
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "web_search should emit command_output"
             assert "search" in cmd_outputs[0]["command"]
@@ -943,8 +928,7 @@ class TestTerminalWiring:
 
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "web_fetch should emit command_output"
             assert "fetch" in cmd_outputs[0]["command"]
@@ -971,8 +955,7 @@ class TestTerminalWiring:
             assert "Error" in result
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1, "git_status error should emit command_output"
             assert cmd_outputs[0]["exitCode"] == -1
@@ -993,8 +976,7 @@ class TestTerminalWiring:
 
             calls = mock_room.local_participant.publish_data.call_args_list
             cmd_outputs = [
-                json.loads(c[0][0].decode()) for c in calls
-                if json.loads(c[0][0].decode()).get("type") == "command_output"
+                json.loads(c[0][0].decode()) for c in calls if json.loads(c[0][0].decode()).get("type") == "command_output"
             ]
             assert len(cmd_outputs) >= 1
             assert cmd_outputs[0]["exitCode"] == 1

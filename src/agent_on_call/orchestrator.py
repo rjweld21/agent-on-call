@@ -8,8 +8,6 @@ import time
 from livekit.agents import Agent, RunContext
 from livekit.agents.llm import function_tool
 
-logger = logging.getLogger(__name__)
-
 from agent_on_call.code_analysis import CodeAnalysisTool
 from agent_on_call.guidance_queue import GuidanceQueue
 from agent_on_call.web_tools import WebSearchTool
@@ -18,6 +16,8 @@ from agent_on_call.workspace import (
     inject_git_credentials,
     sanitize_git_output,
 )
+
+logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_INSTRUCTIONS = """You are the Agent On Call orchestrator — a helpful AI assistant \
 on a voice call with the user. Your display name is "Orchestrator".
@@ -171,7 +171,13 @@ class OrchestratorAgent(Agent):
         await self._emit_action("tool_call", "create_workspace", f"{action} workspace '{name}'...")
         try:
             container_id = self._workspace.create_workspace(name, clean=clean)
-            await self._emit_action("result", "create_workspace", f"Workspace '{name}' {'created' if clean else 'resumed'}", status="completed")
+            status_word = "created" if clean else "resumed"
+            await self._emit_action(
+                "result",
+                "create_workspace",
+                f"Workspace '{name}' {status_word}",
+                status="completed",
+            )
             return f"Workspace '{name}' {'created' if clean else 'resumed'} successfully (container: {container_id[:12]})"
         except Exception as e:
             await self._emit_action("result", "create_workspace", f"Failed to create workspace: {e}", status="failed")
@@ -203,13 +209,8 @@ class OrchestratorAgent(Agent):
             exit_code, stdout, stderr = self._workspace.exec_command(command, timeout=timeout)
 
             # Publish full output to terminal panel via command_output channel
-            full_output = ""
-            if stdout:
-                full_output += stdout
-            if stderr:
-                if full_output:
-                    full_output += "\n"
-                full_output += stderr
+            parts = [p for p in (stdout, stderr) if p]
+            full_output = "\n".join(parts)
             await self._emit_command_output(
                 command_id=cmd_action_id,
                 command=command,
@@ -245,7 +246,8 @@ class OrchestratorAgent(Agent):
                 tool="exec_command",
             )
             await self._emit_action(
-                "result", "exec_command",
+                "result",
+                "exec_command",
                 f"Command timed out after {timeout}s",
                 status="failed",
                 action_id=cmd_action_id,
@@ -261,7 +263,8 @@ class OrchestratorAgent(Agent):
                 tool="exec_command",
             )
             await self._emit_action(
-                "result", "exec_command",
+                "result",
+                "exec_command",
                 f"Error: {e}",
                 status="failed",
                 action_id=cmd_action_id,
@@ -276,10 +279,22 @@ class OrchestratorAgent(Agent):
             content = self._workspace.read_file(path)
             if len(content) > 3000:
                 content = content[:1500] + "\n...(truncated)...\n" + content[-500:]
-            await self._emit_action("result", "read_file", f"Read {len(content)} chars from {path}", status="completed", action_id=read_action_id)
+            await self._emit_action(
+                "result",
+                "read_file",
+                f"Read {len(content)} chars from {path}",
+                status="completed",
+                action_id=read_action_id,
+            )
             return content
         except FileNotFoundError as e:
-            await self._emit_action("result", "read_file", f"File not found: {path}", status="failed", action_id=read_action_id)
+            await self._emit_action(
+                "result",
+                "read_file",
+                f"File not found: {path}",
+                status="failed",
+                action_id=read_action_id,
+            )
             return f"Error: {e}"
 
     @function_tool
@@ -288,10 +303,22 @@ class OrchestratorAgent(Agent):
         write_action_id = await self._emit_action("tool_call", "write_file", f"Writing file: {path}")
         try:
             result = self._workspace.write_file(path, content)
-            await self._emit_action("result", "write_file", f"Written to {path}", status="completed", action_id=write_action_id)
+            await self._emit_action(
+                "result",
+                "write_file",
+                f"Written to {path}",
+                status="completed",
+                action_id=write_action_id,
+            )
             return result
         except IOError as e:
-            await self._emit_action("result", "write_file", f"Write failed: {path}", status="failed", action_id=write_action_id)
+            await self._emit_action(
+                "result",
+                "write_file",
+                f"Write failed: {path}",
+                status="failed",
+                action_id=write_action_id,
+            )
             return f"Error: {e}"
 
     @function_tool
@@ -299,7 +326,13 @@ class OrchestratorAgent(Agent):
         """List files and directories in the workspace."""
         list_action_id = await self._emit_action("tool_call", "list_files", f"Listing directory: {path}")
         result = self._workspace.list_files(path)
-        await self._emit_action("result", "list_files", f"Listed files in {path}", status="completed", action_id=list_action_id)
+        await self._emit_action(
+            "result",
+            "list_files",
+            f"Listed files in {path}",
+            status="completed",
+            action_id=list_action_id,
+        )
         return result
 
     @function_tool
@@ -308,13 +341,25 @@ class OrchestratorAgent(Agent):
         ws_action_id = await self._emit_action("tool_call", "list_workspaces", "Listing workspaces...")
         workspaces = self._workspace.list_workspaces()
         if not workspaces:
-            await self._emit_action("result", "list_workspaces", "No workspaces found", status="completed", action_id=ws_action_id)
+            await self._emit_action(
+                "result",
+                "list_workspaces",
+                "No workspaces found",
+                status="completed",
+                action_id=ws_action_id,
+            )
             return "No workspaces found. Create one with create_workspace."
         lines = [f"- {w['name']} ({w['status']})" for w in workspaces]
         active = self._workspace.get_active_workspace()
         if active:
             lines.append(f"\nActive workspace: {active}")
-        await self._emit_action("result", "list_workspaces", f"Found {len(workspaces)} workspace(s)", status="completed", action_id=ws_action_id)
+        await self._emit_action(
+            "result",
+            "list_workspaces",
+            f"Found {len(workspaces)} workspace(s)",
+            status="completed",
+            action_id=ws_action_id,
+        )
         return "\n".join(lines)
 
     def _get_git_token(self) -> str | None:
@@ -381,16 +426,22 @@ class OrchestratorAgent(Agent):
             return sanitize_git_output(result, token)
         except TimeoutError:
             await self._emit_command_output(
-                command_id=clone_action_id, command=display_cmd,
-                output="Clone timed out after 120s", exit_code=-1, done=True,
+                command_id=clone_action_id,
+                command=display_cmd,
+                output="Clone timed out after 120s",
+                exit_code=-1,
+                done=True,
                 tool="git_clone",
             )
             await self._emit_action("result", "git_clone", "Clone timed out", status="failed", action_id=clone_action_id)
             return "Error: Clone timed out after 120s. The repository may be very large."
         except RuntimeError as e:
             await self._emit_command_output(
-                command_id=clone_action_id, command=display_cmd,
-                output=str(e), exit_code=-1, done=True,
+                command_id=clone_action_id,
+                command=display_cmd,
+                output=str(e),
+                exit_code=-1,
+                done=True,
                 tool="git_clone",
             )
             await self._emit_action("result", "git_clone", f"Error: {e}", status="failed", action_id=clone_action_id)
@@ -412,14 +463,23 @@ class OrchestratorAgent(Agent):
                 tool="git_status",
             )
             if exit_code != 0:
-                await self._emit_action("result", "git_status", "git status failed", status="failed", action_id=status_action_id)
+                await self._emit_action(
+                    "result",
+                    "git_status",
+                    "git status failed",
+                    status="failed",
+                    action_id=status_action_id,
+                )
                 return f"git status failed:\n{stderr or stdout}"
             await self._emit_action("result", "git_status", "Status retrieved", status="completed", action_id=status_action_id)
             return stdout
         except RuntimeError as e:
             await self._emit_command_output(
-                command_id=status_action_id, command="git status",
-                output=str(e), exit_code=-1, done=True,
+                command_id=status_action_id,
+                command="git status",
+                output=str(e),
+                exit_code=-1,
+                done=True,
                 tool="git_status",
             )
             await self._emit_action("result", "git_status", f"Error: {e}", status="failed", action_id=status_action_id)
@@ -443,8 +503,11 @@ class OrchestratorAgent(Agent):
             if exit_code != 0:
                 add_output = stderr or stdout or ""
                 await self._emit_command_output(
-                    command_id=commit_action_id, command=f"git add {files}",
-                    output=add_output, exit_code=exit_code, done=True,
+                    command_id=commit_action_id,
+                    command=f"git add {files}",
+                    output=add_output,
+                    exit_code=exit_code,
+                    done=True,
                     tool="git_commit",
                 )
                 await self._emit_action("result", "git_commit", "git add failed", status="failed", action_id=commit_action_id)
@@ -467,17 +530,32 @@ class OrchestratorAgent(Agent):
             if exit_code != 0:
                 output = stdout or stderr
                 if "nothing to commit" in output.lower():
-                    await self._emit_action("result", "git_commit", "Nothing to commit", status="completed", action_id=commit_action_id)
+                    await self._emit_action(
+                        "result",
+                        "git_commit",
+                        "Nothing to commit",
+                        status="completed",
+                        action_id=commit_action_id,
+                    )
                     return "Nothing to commit — working tree is clean."
                 await self._emit_action("result", "git_commit", "Commit failed", status="failed", action_id=commit_action_id)
                 return f"git commit failed:\n{output}"
 
-            await self._emit_action("result", "git_commit", "Committed successfully", status="completed", action_id=commit_action_id)
+            await self._emit_action(
+                "result",
+                "git_commit",
+                "Committed successfully",
+                status="completed",
+                action_id=commit_action_id,
+            )
             return f"Committed successfully:\n{stdout}"
         except RuntimeError as e:
             await self._emit_command_output(
-                command_id=commit_action_id, command=f"git commit -m '{message[:60]}'",
-                output=str(e), exit_code=-1, done=True,
+                command_id=commit_action_id,
+                command=f"git commit -m '{message[:60]}'",
+                output=str(e),
+                exit_code=-1,
+                done=True,
                 tool="git_commit",
             )
             await self._emit_action("result", "git_commit", f"Error: {e}", status="failed", action_id=commit_action_id)
@@ -502,7 +580,12 @@ class OrchestratorAgent(Agent):
         if branch:
             cmd += f" {branch}"
 
-        push_action_id = await self._emit_action("executing", "git_push", f"Pushing to {remote}" + (f" {branch}" if branch else ""))
+        push_msg = f"Pushing to {remote}" + (f" {branch}" if branch else "")
+        push_action_id = await self._emit_action(
+            "executing",
+            "git_push",
+            push_msg,
+        )
         try:
             exit_code, stdout, stderr = self._workspace.exec_command(cmd)
             stdout = sanitize_git_output(stdout, token)
@@ -516,15 +599,24 @@ class OrchestratorAgent(Agent):
                     push_output += "\n"
                 push_output += stderr
             await self._emit_command_output(
-                command_id=push_action_id, command=cmd,
-                output=push_output, exit_code=exit_code, done=True,
+                command_id=push_action_id,
+                command=cmd,
+                output=push_output,
+                exit_code=exit_code,
+                done=True,
                 tool="git_push",
             )
 
             if exit_code != 0:
                 error_msg = stderr or stdout
                 if "authentication failed" in error_msg.lower():
-                    await self._emit_action("result", "git_push", "Authentication failed", status="failed", action_id=push_action_id)
+                    await self._emit_action(
+                        "result",
+                        "git_push",
+                        "Authentication failed",
+                        status="failed",
+                        action_id=push_action_id,
+                    )
                     return "Error: Authentication failed. " "Check GIT_TOKEN environment variable."
                 if "rejected" in error_msg.lower():
                     await self._emit_action("result", "git_push", "Push rejected", status="failed", action_id=push_action_id)
@@ -533,7 +625,13 @@ class OrchestratorAgent(Agent):
                         "The remote has changes you don't have locally. "
                         "Try pulling first."
                     )
-                await self._emit_action("result", "git_push", f"Push failed (exit {exit_code})", status="failed", action_id=push_action_id)
+                await self._emit_action(
+                    "result",
+                    "git_push",
+                    f"Push failed (exit {exit_code})",
+                    status="failed",
+                    action_id=push_action_id,
+                )
                 return f"Push failed (exit {exit_code}):\n{error_msg}"
 
             result = stderr or stdout or "Push completed successfully."
@@ -541,8 +639,11 @@ class OrchestratorAgent(Agent):
             return sanitize_git_output(result, token)
         except RuntimeError as e:
             await self._emit_command_output(
-                command_id=push_action_id, command=cmd,
-                output=str(e), exit_code=-1, done=True,
+                command_id=push_action_id,
+                command=cmd,
+                output=str(e),
+                exit_code=-1,
+                done=True,
                 tool="git_push",
             )
             await self._emit_action("result", "git_push", f"Error: {e}", status="failed", action_id=push_action_id)
@@ -571,8 +672,11 @@ class OrchestratorAgent(Agent):
             tool="web_search",
         )
         await self._emit_action(
-            "result", "web_search", f"Search {'completed' if status == 'completed' else 'failed'}",
-            status=status, action_id=search_action_id,
+            "result",
+            "web_search",
+            f"Search {'completed' if status == 'completed' else 'failed'}",
+            status=status,
+            action_id=search_action_id,
         )
         return result
 
@@ -599,8 +703,11 @@ class OrchestratorAgent(Agent):
             tool="web_fetch",
         )
         await self._emit_action(
-            "result", "web_fetch", f"Fetch {'completed' if status == 'completed' else 'failed'}",
-            status=status, action_id=fetch_action_id,
+            "result",
+            "web_fetch",
+            f"Fetch {'completed' if status == 'completed' else 'failed'}",
+            status=status,
+            action_id=fetch_action_id,
         )
         return result
 
