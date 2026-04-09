@@ -14,6 +14,7 @@ from livekit.plugins import deepgram, cartesia, silero
 
 from agent_on_call.orchestrator import OrchestratorAgent, ORCHESTRATOR_INSTRUCTIONS
 from agent_on_call.prompt_builder import PromptBuilder, VERBOSITY_PROMPTS, TEXT_MODE_INSTRUCTION
+from agent_on_call.session_logger import SessionLogger
 from agent_on_call.transcript import SessionTranscript
 from agent_on_call.turn_taking import DEFAULT_VAD_CONFIG, DEFAULT_TURN_TAKING_CONFIG
 
@@ -370,6 +371,18 @@ async def orchestrator_session(ctx: agents.JobContext):
     # Set orchestrator display name (must be after session.start connects to room)
     await ctx.room.local_participant.set_name("Orchestrator")
 
+    # --- Session debug logger ---
+    session_log = SessionLogger()
+    session_log.start(ctx.room.name or "unknown")
+    session_log.info("session", f"Model={selected_model}, verbosity={verbosity}, tts={tts_available}")
+
+    async def _close_session_log():
+        """Close session log on shutdown."""
+        session_log.close()
+        logger.info("Session log saved to %s", session_log.filepath)
+
+    ctx.add_shutdown_callback(_close_session_log)
+
     # --- Transcript tracking ---
     transcript = SessionTranscript(session_id=ctx.room.name or "unknown")
     transcript.add_participant(
@@ -385,11 +398,13 @@ async def orchestrator_session(ctx: agents.JobContext):
     def _on_user_transcription(event):
         if hasattr(event, "text") and event.text:
             transcript.add_entry(speaker="user", content=event.text, entry_type="speech")
+            session_log.debug("transcript", f"User: {event.text[:200]}")
 
     @session.on("agent_speech_committed")
     def _on_agent_speech(event):
         if hasattr(event, "text") and event.text:
             transcript.add_entry(speaker="agent", content=event.text, entry_type="speech")
+            session_log.debug("transcript", f"Agent: {event.text[:200]}")
 
     async def _save_transcript():
         """Save transcript on session end."""
@@ -460,6 +475,7 @@ async def orchestrator_session(ctx: agents.JobContext):
 
     @session.on("error")
     def _on_session_error(error):
+        session_log.error("session", f"Session error: {error}")
         if tts_disabled_at_runtime:
             return
 
@@ -503,6 +519,7 @@ async def orchestrator_session(ctx: agents.JobContext):
                     reason = "no_credits"
 
         if is_tts_error:
+            session_log.warn("tts", f"TTS error detected, disabling — reason={reason}")
             _disable_tts_runtime(reason)
 
     # --- Mid-session settings via data channel ---
@@ -512,8 +529,15 @@ async def orchestrator_session(ctx: agents.JobContext):
 
         update = _parse_settings_update(data_packet.data)
         if update is None:
+            # Log non-settings data channel messages
+            try:
+                msg = json.loads(data_packet.data)
+                session_log.debug("data_channel", f"Received: type={msg.get('type', 'unknown')}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                session_log.debug("data_channel", "Received non-JSON data")
             return
 
+        session_log.info("data_channel", f"Settings update: {update}")
         selected_model, verbosity, _ = await _apply_settings_update(
             update, agent, session, ctx.room, selected_model, verbosity,
             prompt_builder=prompt_builder,

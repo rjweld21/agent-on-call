@@ -43,5 +43,8 @@ Thumbs.db
 # Agent transcripts (user conversations — never commit)
 .aoc/transcripts/
 
+# Session debug logs (runtime data — never commit)
+.aoc/sessions/
+
 # Claude Code local state
 .claude/

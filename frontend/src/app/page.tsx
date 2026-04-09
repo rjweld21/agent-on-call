@@ -22,6 +22,7 @@ import {
   type TranscriptEntry,
 } from "@/lib/transcript-time";
 import { SettingsProvider, useSettings, useSettingsSync } from "@/lib/settings-context";
+import { SessionLogBuffer } from "@/lib/session-log";
 import { SettingsPanel } from "@/app/components/SettingsPanel";
 import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
 import { TerminalPanel, type TerminalEntry } from "@/app/components/TerminalPanel";
@@ -136,6 +137,24 @@ function AgentInterface() {
   const [ttsBanner, setTtsBanner] = useState<{ reason: string } | null>(null);
   const [systemMessages, setSystemMessages] = useState<TranscriptEntry[]>([]);
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
+  const sessionLogRef = useRef(new SessionLogBuffer());
+
+  // Log connection event on mount + intercept console.error
+  useEffect(() => {
+    sessionLogRef.current.info("connection", "AgentInterface mounted — connected to room");
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      sessionLogRef.current.error("frontend", args.map(String).join(" "));
+      origError.apply(console, args);
+    };
+    return () => {
+      console.error = origError;
+      sessionLogRef.current.info("connection", "AgentInterface unmounting — disconnecting");
+      // Save session log to localStorage on disconnect
+      const sessionId = room.name || `session-${Date.now()}`;
+      sessionLogRef.current.saveToLocalStorage(sessionId);
+    };
+  }, [room.name]);
 
   // Sync settings changes to agent via data channel
   useSettingsSync(room);
@@ -146,6 +165,7 @@ function AgentInterface() {
       try {
         const text = new TextDecoder().decode(payload);
         const msg = JSON.parse(text);
+        sessionLogRef.current.debug("data_channel", `Received: type=${msg?.type || "unknown"}`);
         if (msg?.type === "tts_status") {
           if (msg.available === false && msg.reason) {
             setTtsBanner({ reason: msg.reason });
@@ -265,6 +285,7 @@ function AgentInterface() {
         }
       } catch {
         // Ignore non-JSON or unrelated messages
+        sessionLogRef.current.debug("data_channel", "Received non-JSON data");
       }
     };
     room.on("dataReceived", handleDataReceived);
@@ -277,6 +298,7 @@ function AgentInterface() {
   useEffect(() => {
     const handleParticipantConnected = (participant: RemoteParticipant) => {
       if (!participant.isAgent) return;
+      sessionLogRef.current.info("connection", `Agent joined: ${participant.name || participant.identity}`);
       const now = new Date();
       const id = `system-join-${participant.identity}-${now.getTime()}`;
       setSystemMessages((prev) => [
@@ -301,6 +323,7 @@ function AgentInterface() {
 
     const handleParticipantDisconnected = (participant: RemoteParticipant) => {
       if (!participant.isAgent) return;
+      sessionLogRef.current.info("connection", `Agent left: ${participant.name || participant.identity}`);
       const now = new Date();
       const id = `system-leave-${participant.identity}-${now.getTime()}`;
       setSystemMessages((prev) => [
@@ -367,12 +390,34 @@ function AgentInterface() {
     ...systemMessages,
   ].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
+  // Log new transcript entries to session log
+  const prevTranscriptLenRef = useRef(0);
+  useEffect(() => {
+    if (transcript.length > prevTranscriptLenRef.current) {
+      const newEntries = transcript.slice(prevTranscriptLenRef.current);
+      for (const entry of newEntries) {
+        sessionLogRef.current.debug("transcript", `[${entry.speaker}] ${entry.text.slice(0, 200)}`);
+      }
+    }
+    prevTranscriptLenRef.current = transcript.length;
+  }, [transcript.length, transcript]);
+
   // Auto-scroll transcript to bottom whenever entries change
   useEffect(() => {
     if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
   }, [transcript.length]);
+
+  const downloadSessionLog = useCallback(() => {
+    const blob = sessionLogRef.current.toBlob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `session-log-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   const sendMessage = useCallback(async () => {
     const msg = textInput.trim();
@@ -666,6 +711,17 @@ function AgentInterface() {
         {/* Call Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "auto", paddingTop: "1rem" }}>
           <MuteButton />
+          <button
+            data-testid="download-log-button"
+            onClick={downloadSessionLog}
+            style={{
+              padding: "0.5rem 1rem", borderRadius: "8px",
+              border: "1px solid #334155", background: "#1e293b",
+              color: "#94a3b8", cursor: "pointer", fontSize: "0.8rem",
+            }}
+          >
+            Download Log
+          </button>
           <DisconnectButton style={{
             padding: "0.5rem 1.5rem", borderRadius: "8px",
             border: "1px solid #dc2626", background: "#7f1d1d",
