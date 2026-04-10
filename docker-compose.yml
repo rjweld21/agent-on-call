@@ -21,6 +21,7 @@ services:
       - LIVEKIT_API_SECRET=secret
     volumes:
       - ./src:/app/src
+      - ./.aoc/sessions:/app/.aoc/sessions
       - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:

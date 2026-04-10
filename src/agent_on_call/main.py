@@ -78,9 +78,15 @@ def _build_llm(model: str | None = None):
         # that sends it as Bearer auth instead of x-api-key
         if effective_key.startswith("sk-ant-oat"):
             client = anthropic_sdk.AsyncAnthropic(auth_token=effective_key)
-            return anthropic_plugin.LLM(model=effective_model, api_key=effective_key, client=client)
+            return anthropic_plugin.LLM(
+                model=effective_model, api_key=effective_key,
+                client=client, _strict_tool_schema=False,
+            )
         else:
-            return anthropic_plugin.LLM(model=effective_model, api_key=effective_key)
+            return anthropic_plugin.LLM(
+                model=effective_model, api_key=effective_key,
+                _strict_tool_schema=False,
+            )
 
 
 def _parse_settings_update(data: bytes) -> dict[str, Any] | None:
