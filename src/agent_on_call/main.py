@@ -78,12 +78,15 @@ def _build_llm(model: str | None = None):
         if effective_key.startswith("sk-ant-oat"):
             client = anthropic_sdk.AsyncAnthropic(auth_token=effective_key)
             return anthropic_plugin.LLM(
-                model=effective_model, api_key=effective_key,
-                client=client, _strict_tool_schema=False,
+                model=effective_model,
+                api_key=effective_key,
+                client=client,
+                _strict_tool_schema=False,
             )
         else:
             return anthropic_plugin.LLM(
-                model=effective_model, api_key=effective_key,
+                model=effective_model,
+                api_key=effective_key,
                 _strict_tool_schema=False,
             )
 
@@ -114,7 +117,11 @@ def _parse_settings_update(data: bytes) -> dict[str, Any] | None:
     if isinstance(raw_verbosity, int) and 1 <= raw_verbosity <= 5:
         verbosity = raw_verbosity
 
-    return {"model": model, "verbosity": verbosity}
+    # Validate tts_enabled
+    raw_tts_enabled = msg.get("tts_enabled")
+    tts_enabled = raw_tts_enabled if isinstance(raw_tts_enabled, bool) else None
+
+    return {"model": model, "verbosity": verbosity, "tts_enabled": tts_enabled}
 
 
 def _build_verbosity_instructions(base_instructions: str, verbosity: int) -> str:
@@ -303,6 +310,97 @@ def _build_session(model: str | None, tts_enabled: bool = True) -> AgentSession:
     )
 
 
+async def _apply_tts_toggle(
+    tts_enabled: bool,
+    agent: OrchestratorAgent,
+    session: AgentSession,
+    prompt_builder: PromptBuilder | None,
+    tts_available: bool,
+) -> bool:
+    """Apply a TTS toggle change. Returns True if state changed."""
+    if tts_enabled and tts_available:
+        return await _enable_tts(agent, session, prompt_builder)
+    elif not tts_enabled:
+        return _disable_tts_toggle(session, prompt_builder)
+    return False
+
+
+async def _enable_tts(
+    agent: OrchestratorAgent,
+    session: AgentSession,
+    prompt_builder: PromptBuilder | None,
+) -> bool:
+    """Re-enable TTS on the session. Returns True on success."""
+    try:
+        tts = cartesia.TTS(api_key=os.environ.get("CARTESIA_API_KEY"))
+        session._tts = tts
+        try:
+            session.output.set_audio_enabled(True)
+        except Exception as e:
+            logger.warning("Failed to enable audio output: %s", e)
+        if prompt_builder:
+            prompt_builder.set_tts_available(True)
+            await agent.update_instructions(prompt_builder.build())
+        logger.info("TTS re-enabled by user toggle")
+        return True
+    except Exception as e:
+        logger.error("Failed to re-enable TTS: %s", e)
+        return False
+
+
+def _disable_tts_toggle(
+    session: AgentSession,
+    prompt_builder: PromptBuilder | None,
+) -> bool:
+    """Disable TTS on the session. Returns True."""
+    session._tts = None
+    try:
+        session.output.set_audio_enabled(False)
+    except Exception as e:
+        logger.warning("Failed to disable audio output: %s", e)
+    if prompt_builder:
+        prompt_builder.set_tts_available(False)
+        # Note: prompt update requires async, handled by caller
+    logger.info("TTS disabled by user toggle")
+    return True
+
+
+async def _apply_verbosity_change(
+    verbosity: int,
+    agent: OrchestratorAgent,
+    prompt_builder: PromptBuilder | None,
+) -> None:
+    """Apply a verbosity change to the agent instructions."""
+    if prompt_builder:
+        prompt_builder.set_verbosity(verbosity)
+        new_instructions = prompt_builder.build()
+    else:
+        new_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, verbosity)
+    await agent.update_instructions(new_instructions)
+    logger.info("Mid-session verbosity updated to %d", verbosity)
+
+
+async def _apply_model_change(model: str, session: AgentSession) -> bool:
+    """Apply a model change to the session. Returns True on success."""
+    try:
+        new_llm = _build_llm(model=model)
+        session._llm = new_llm
+        logger.info("Mid-session model updated to %s", model)
+        return True
+    except Exception as e:
+        logger.error("Failed to switch model to %s: %s", model, e)
+        return False
+
+
+async def _send_settings_ack(room: Any, model: str | None, verbosity: int) -> None:
+    """Send settings acknowledgment to frontend via data channel."""
+    ack = json.dumps({"type": "settings_ack", "model": model, "verbosity": verbosity})
+    try:
+        await room.local_participant.publish_data(ack.encode(), topic="settings")
+    except Exception as e:
+        logger.warning("Failed to send settings ack: %s", e)
+
+
 async def _apply_settings_update(
     update: dict[str, Any],
     agent: OrchestratorAgent,
@@ -311,6 +409,7 @@ async def _apply_settings_update(
     current_model: str | None,
     current_verbosity: int,
     prompt_builder: PromptBuilder | None = None,
+    tts_available: bool = True,
 ) -> tuple[str | None, int, bool]:
     """Apply a parsed settings update to the agent and session.
 
@@ -318,47 +417,34 @@ async def _apply_settings_update(
     """
     changed = False
 
+    # Apply tts_enabled toggle
+    if update.get("tts_enabled") is not None:
+        tts_changed = await _apply_tts_toggle(
+            update["tts_enabled"],
+            agent,
+            session,
+            prompt_builder,
+            tts_available,
+        )
+        if tts_changed:
+            changed = True
+            if not update["tts_enabled"] and prompt_builder:
+                await agent.update_instructions(prompt_builder.build())
+
     # Apply verbosity change
     if update["verbosity"] is not None and update["verbosity"] != current_verbosity:
         current_verbosity = update["verbosity"]
-        if prompt_builder:
-            prompt_builder.set_verbosity(current_verbosity)
-            new_instructions = prompt_builder.build()
-        else:
-            new_instructions = _build_verbosity_instructions(ORCHESTRATOR_INSTRUCTIONS, current_verbosity)
-        await agent.update_instructions(new_instructions)
-        logger.info("Mid-session verbosity updated to %d", current_verbosity)
-        logger.debug("New instructions (verbosity=%d): %s", current_verbosity, new_instructions[:200])
+        await _apply_verbosity_change(current_verbosity, agent, prompt_builder)
         changed = True
 
     # Apply model change
     if update["model"] is not None and update["model"] != current_model:
         current_model = update["model"]
-        try:
-            new_llm = _build_llm(model=current_model)
-            session._llm = new_llm  # No public setter in LiveKit SDK — _llm is read each call
-            logger.info("Mid-session model updated to %s", current_model)
-            logger.debug("LLM instance replaced on session for model=%s", current_model)
+        if await _apply_model_change(current_model, session):
             changed = True
-        except Exception as e:
-            logger.error("Failed to switch model to %s: %s", current_model, e)
 
-    # Send acknowledgment back to frontend
     if changed:
-        ack = json.dumps(
-            {
-                "type": "settings_ack",
-                "model": current_model,
-                "verbosity": current_verbosity,
-            }
-        )
-        try:
-            await room.local_participant.publish_data(
-                ack.encode(),
-                topic="settings",
-            )
-        except Exception as e:
-            logger.warning("Failed to send settings ack: %s", e)
+        await _send_settings_ack(room, current_model, current_verbosity)
 
     return current_model, current_verbosity, changed
 
@@ -618,6 +704,7 @@ async def orchestrator_session(ctx: agents.JobContext):  # noqa: C901
             selected_model,
             verbosity,
             prompt_builder=prompt_builder,
+            tts_available=tts_available,
         )
 
     def _on_data_received(data_packet: rtc.DataPacket):

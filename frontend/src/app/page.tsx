@@ -27,6 +27,7 @@ import { SettingsPanel } from "@/app/components/SettingsPanel";
 import { ThinkingPanel, type ActivityItem } from "@/app/components/ThinkingPanel";
 import { TerminalPanel, type TerminalEntry } from "@/app/components/TerminalPanel";
 import { MuteButton } from "@/app/components/MuteButton";
+import { TtsToggle, useTtsToggle } from "@/app/components/TtsToggle";
 
 function MicMonitor() {
   const { microphoneTrack } = useLocalParticipant();
@@ -141,6 +142,7 @@ function AgentInterface() {
   const [systemMessages, setSystemMessages] = useState<TranscriptEntry[]>([]);
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
   const sessionLogRef = useRef(new SessionLogBuffer());
+  const { setTtsEnabled } = useTtsToggle();
 
   // Log connection event on mount + intercept console.error
   // Start auto-save + beforeunload on connect, stop on disconnect
@@ -180,6 +182,8 @@ function AgentInterface() {
         if (msg?.type === "tts_status") {
           if (msg.available === false && msg.reason) {
             setTtsBanner({ reason: msg.reason });
+            // Sync the TTS toggle to show as off when auto-disabled
+            setTtsEnabled(false);
           } else if (msg.available === true) {
             setTtsBanner(null);
           }
@@ -303,7 +307,7 @@ function AgentInterface() {
     return () => {
       room.off("dataReceived", handleDataReceived);
     };
-  }, [room]);
+  }, [room, setTtsEnabled]);
 
   // Listen for agent join/leave events
   useEffect(() => {
@@ -722,6 +726,7 @@ function AgentInterface() {
         {/* Call Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginTop: "auto", paddingTop: "1rem" }}>
           <MuteButton />
+          <TtsToggle />
           <button
             data-testid="download-log-button"
             onClick={downloadSessionLog}
