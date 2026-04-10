@@ -112,6 +112,7 @@ export function useSettingsSync(room: Room | null | undefined) {
   const { settings } = useSettings();
   const model = settings.model?.anthropicModel as string | undefined;
   const verbosity = settings.voice?.verbosity as number | undefined;
+  const ttsEnabled = settings.voice?.ttsEnabled as boolean | undefined;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialRef = useRef(true);
 
@@ -134,6 +135,7 @@ export function useSettingsSync(room: Room | null | undefined) {
         type: "settings_update",
         ...(model !== undefined && { model }),
         ...(verbosity !== undefined && { verbosity }),
+        ...(ttsEnabled !== undefined && { tts_enabled: ttsEnabled }),
       });
 
       try {
@@ -151,5 +153,5 @@ export function useSettingsSync(room: Room | null | undefined) {
         clearTimeout(debounceRef.current);
       }
     };
-  }, [room, model, verbosity]);
+  }, [room, model, verbosity, ttsEnabled]);
 }

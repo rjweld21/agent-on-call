@@ -418,6 +418,38 @@ class TestParseSettingsUpdate:
         data = json.dumps([1, 2, 3]).encode()
         assert _parse_settings_update(data) is None
 
+    def test_tts_enabled_true(self):
+        from agent_on_call.main import _parse_settings_update
+
+        data = json.dumps({"type": "settings_update", "tts_enabled": True}).encode()
+        result = _parse_settings_update(data)
+        assert result is not None
+        assert result["tts_enabled"] is True
+
+    def test_tts_enabled_false(self):
+        from agent_on_call.main import _parse_settings_update
+
+        data = json.dumps({"type": "settings_update", "tts_enabled": False}).encode()
+        result = _parse_settings_update(data)
+        assert result is not None
+        assert result["tts_enabled"] is False
+
+    def test_tts_enabled_non_bool_returns_none(self):
+        from agent_on_call.main import _parse_settings_update
+
+        data = json.dumps({"type": "settings_update", "tts_enabled": "yes"}).encode()
+        result = _parse_settings_update(data)
+        assert result is not None
+        assert result["tts_enabled"] is None
+
+    def test_tts_enabled_missing_returns_none(self):
+        from agent_on_call.main import _parse_settings_update
+
+        data = json.dumps({"type": "settings_update", "verbosity": 3}).encode()
+        result = _parse_settings_update(data)
+        assert result is not None
+        assert result["tts_enabled"] is None
+
 
 class TestReasonFromStatus:
     def test_401_returns_auth_failed(self):
@@ -787,3 +819,85 @@ class TestApplySettingsUpdate:
         await _apply_settings_update(update, agent, session, room, None, 3, prompt_builder=prompt_builder)
         prompt_builder.set_verbosity.assert_called_once_with(2)
         prompt_builder.build.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_tts_enabled_false_disables_tts(self):
+        from agent_on_call.main import _apply_settings_update
+
+        agent = MagicMock()
+        agent.update_instructions = AsyncMock()
+        session = MagicMock()
+        session.output = MagicMock()
+        room = MagicMock()
+        room.local_participant.publish_data = AsyncMock()
+        prompt_builder = MagicMock()
+        prompt_builder.build.return_value = "new instructions"
+
+        update = {"model": None, "verbosity": None, "tts_enabled": False}
+        _, _, changed = await _apply_settings_update(
+            update,
+            agent,
+            session,
+            room,
+            None,
+            3,
+            prompt_builder=prompt_builder,
+            tts_available=True,
+        )
+        assert changed is True
+        assert session._tts is None
+        session.output.set_audio_enabled.assert_called_once_with(False)
+        prompt_builder.set_tts_available.assert_called_once_with(False)
+
+    @pytest.mark.asyncio
+    async def test_tts_enabled_true_reenables_tts(self):
+        from agent_on_call.main import _apply_settings_update
+
+        agent = MagicMock()
+        agent.update_instructions = AsyncMock()
+        session = MagicMock()
+        session.output = MagicMock()
+        room = MagicMock()
+        room.local_participant.publish_data = AsyncMock()
+        prompt_builder = MagicMock()
+        prompt_builder.build.return_value = "new instructions"
+
+        with patch("agent_on_call.main.cartesia") as mock_cartesia:
+            mock_cartesia.TTS.return_value = MagicMock()
+            update = {"model": None, "verbosity": None, "tts_enabled": True}
+            _, _, changed = await _apply_settings_update(
+                update,
+                agent,
+                session,
+                room,
+                None,
+                3,
+                prompt_builder=prompt_builder,
+                tts_available=True,
+            )
+            assert changed is True
+            mock_cartesia.TTS.assert_called_once()
+            session.output.set_audio_enabled.assert_called_once_with(True)
+            prompt_builder.set_tts_available.assert_called_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_tts_enabled_true_when_tts_unavailable_does_not_reenable(self):
+        from agent_on_call.main import _apply_settings_update
+
+        agent = MagicMock()
+        session = MagicMock()
+        room = MagicMock()
+        room.local_participant.publish_data = AsyncMock()
+
+        update = {"model": None, "verbosity": None, "tts_enabled": True}
+        _, _, changed = await _apply_settings_update(
+            update,
+            agent,
+            session,
+            room,
+            None,
+            3,
+            tts_available=False,
+        )
+        # Should not re-enable when TTS is not available at the system level
+        assert changed is False
