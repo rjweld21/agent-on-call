@@ -29,7 +29,6 @@ server = AgentServer()
 
 VALID_ANTHROPIC_MODELS = {
     "claude-haiku-4-5-20250514",
-    "claude-sonnet-4-20250514",
     "claude-sonnet-4-5-20250514",
     "claude-opus-4-20250514",
 }
